@@ -106,6 +106,10 @@
       </div>
     </div>
 
+    <div id="ifc-drop-overlay" aria-hidden="true">
+      <div>Déposez votre fichier IFC (.ifc, .ifczip)</div>
+    </div>
+
     <div class="highlight-label" id="highlight-label"></div>
   </section>
 
@@ -161,6 +165,11 @@ import * as WebIFC from 'web-ifc';
 // On les lit avec fallback sur la valeur du standard IFC4.
 const W = WebIFC;
 function ifc(name, fallback) { return W[name] ?? fallback; }
+const IFC_TYPE_NAME_BY_CODE = Object.fromEntries(
+  Object.entries(W)
+    .filter(([k, v]) => /^IFC[A-Z0-9_]+$/.test(k) && typeof v === 'number')
+    .map(([k, v]) => [v, k])
+);
 
 // ── Types géométriques (produisent une géométrie Three.js) ────────────────────
 const GEOM_TYPES = {
@@ -232,6 +241,11 @@ const GEOM_TYPES = {
   IFCFURNISHINGELEMENT: ifc('IFCFURNISHINGELEMENT', 263784265),
   IFCFURNITURE:         ifc('IFCFURNITURE',         1509553395),
   IFCSYSTEMFURNITURELEMENT: ifc('IFCSYSTEMFURNITURELEMENT', 3278254401),
+  IFCBUILDINGELEMENTPROXY: ifc('IFCBUILDINGELEMENTPROXY', 1095909175),
+  IFCELEMENTASSEMBLY:   ifc('IFCELEMENTASSEMBLY',   412334446),
+  IFCBUILDINGELEMENTPART: ifc('IFCBUILDINGELEMENTPART', 2979338954),
+  IFCDISCRETEACCESSORY: ifc('IFCDISCRETEACCESSORY', 1335981549),
+  IFCPROXY:             ifc('IFCPROXY',             1899726724),
   IFCMEDICALDEVICE:     ifc('IFCMEDICALDEVICE',     1437502449),
   IFCTRANSPORTDEVICE:   ifc('IFCTRANSPORTDEVICE',   3815607619),
   // Finitions
@@ -263,6 +277,13 @@ const _CL_PLB    = new Set([GEOM_TYPES.IFCPIPESEGMENT, GEOM_TYPES.IFCPIPEFITTING
 const _CL_ELEC   = new Set([GEOM_TYPES.IFCELECTRICDISTRIBUTIONBOARD, GEOM_TYPES.IFCLIGHTFIXTURE, GEOM_TYPES.IFCELECTRICAPPLIANCE, GEOM_TYPES.IFCJUNCTIONBOX, GEOM_TYPES.IFCPROTECTIVEDEVICE, GEOM_TYPES.IFCSENSOR, GEOM_TYPES.IFCACTUATOR, GEOM_TYPES.IFCALARM, GEOM_TYPES.IFCELECTRICMOTOR, GEOM_TYPES.IFCTRANSFORMER, GEOM_TYPES.IFCCABLESEGMENT, GEOM_TYPES.IFCCABLEFITTING]);
 const _CL_SPACE  = new Set([GEOM_TYPES.IFCSPACE, GEOM_TYPES.IFCZONE]);
 const _CL_FURN   = new Set([GEOM_TYPES.IFCFURNISHINGELEMENT, GEOM_TYPES.IFCFURNITURE, GEOM_TYPES.IFCSYSTEMFURNITURELEMENT, GEOM_TYPES.IFCMEDICALDEVICE, GEOM_TYPES.IFCTRANSPORTDEVICE]);
+const _CL_GENERIC = new Set([
+  GEOM_TYPES.IFCBUILDINGELEMENTPROXY,
+  GEOM_TYPES.IFCELEMENTASSEMBLY,
+  GEOM_TYPES.IFCBUILDINGELEMENTPART,
+  GEOM_TYPES.IFCDISCRETEACCESSORY,
+  GEOM_TYPES.IFCPROXY,
+]);
 const _CL_FIN    = new Set([GEOM_TYPES.IFCCOVERING, GEOM_TYPES.IFCCOVERINGTYPE, GEOM_TYPES.IFCFLOORINGTYPE]);
 
 function classifyType(n) {
@@ -275,8 +296,29 @@ function classifyType(n) {
   if (_CL_ELEC.has(n))  return 'MEP — Électricité';
   if (_CL_SPACE.has(n)) return 'Espaces';
   if (_CL_FURN.has(n))  return 'Mobilier';
+  if (_CL_GENERIC.has(n)) return 'Objets génériques';
   if (_CL_FIN.has(n))   return 'Finitions';
   return null;
+}
+
+function looksLikeFurniture(...parts) {
+  const txt = parts
+    .filter(Boolean)
+    .map(v => String(v).toLowerCase())
+    .join(' ');
+  if (!txt) return false;
+  return /(mobilier|furniture|furnishing|chair|table|desk|sofa|cabinet|armoire|meuble|lit|bed|seating|seat|banquette|bureau|chaise|fauteuil|canape|canapé)/.test(txt);
+}
+
+function resolveLayerName(typeNum, name, objectType, familyName) {
+  const base = classifyType(typeNum);
+  if (base === 'Objets génériques' && looksLikeFurniture(name, objectType, familyName)) {
+    return 'Mobilier';
+  }
+  if (!base && looksLikeFurniture(name, objectType, familyName)) {
+    return 'Mobilier';
+  }
+  return base || `IFC_${typeNum}`;
 }
 
 // ── Définitions visuelles par calque ─────────────────────────────────────────
@@ -380,6 +422,7 @@ const Families   = {}; // familyName  → expressID[]
 const Storeys    = {}; // storeyName  → expressID[]
 let modelID_current = null;
 let ifcModelLoaded  = false;
+let modelMesh_current = null;
 let selectedId      = null;
 let wireframeMode   = false;
 let xrayMode        = false;
@@ -391,8 +434,24 @@ let leftTab         = 'layers';
 //  CHARGEMENT IFC
 // ═════════════════════════════════════════════════════════════════════════════
 async function loadIFCFile(input) {
-  const file = input.files[0];
+  const file = input?.files?.[0];
   if (!file) return;
+  await loadIFCFromFile(file);
+}
+
+function isSupportedIFCFile(file) {
+  if (!file?.name) return false;
+  const name = file.name.toLowerCase();
+  return name.endsWith('.ifc') || name.endsWith('.ifczip');
+}
+
+async function loadIFCFromFile(file) {
+  if (!file || !isSupportedIFCFile(file)) {
+    setLoadingMsg('⚠ Fichier non supporté (utilisez .ifc ou .ifczip)');
+    document.getElementById('loading').style.display = 'flex';
+    setTimeout(() => document.getElementById('loading').style.display = 'none', 2200);
+    return;
+  }
 
   // ── Nettoyage du modèle précédent ─────────────────────────────────────────
   if (ifcModelLoaded && modelID_current !== null) {
@@ -426,6 +485,7 @@ async function loadIFCFile(input) {
     });
     _extraColorIdx = 0;
     selectedId = null; totalTris = 0; projectInfo = {};
+    modelMesh_current = null;
     showPropPanel(null);
   }
 
@@ -440,6 +500,7 @@ async function loadIFCFile(input) {
     const model = await ifcLoader.ifcManager.parse(data);
     modelID_current = model.modelID;
     ifcModelLoaded  = true;
+    modelMesh_current = model.mesh;
     // Le mesh racine du modèle est ajouté à la scène — il contient toute la géo
     scene.add(model.mesh);
 
@@ -453,7 +514,7 @@ async function loadIFCFile(input) {
     await buildStoreyIndex(model.modelID);
 
     setLoadingMsg('Extraction des éléments…');
-    await extractElements(model.modelID, setLoadingMsg);
+    await extractElements(model.modelID, model.mesh, setLoadingMsg);
     // Après extraction, masquer le mesh racine pour éviter la duplication visuelle
     if (model.mesh) {
       model.mesh.visible = false;
@@ -474,6 +535,50 @@ async function loadIFCFile(input) {
     setLoadingMsg('⚠ ' + (e.message || String(e)));
     setTimeout(() => document.getElementById('loading').style.display = 'none', 5000);
   }
+}
+
+function setupIFCDragDrop() {
+  const dropOverlay = document.getElementById('ifc-drop-overlay');
+  let dragDepth = 0;
+
+  const setDropUI = active => {
+    wrap.classList.toggle('drag-over', active);
+    if (dropOverlay) dropOverlay.classList.toggle('active', active);
+  };
+
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
+    window.addEventListener(evt, e => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  });
+
+  wrap.addEventListener('dragenter', e => {
+    e.preventDefault();
+    dragDepth++;
+    setDropUI(true);
+  });
+
+  wrap.addEventListener('dragover', e => {
+    e.preventDefault();
+    setDropUI(true);
+  });
+
+  wrap.addEventListener('dragleave', e => {
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) setDropUI(false);
+  });
+
+  wrap.addEventListener('drop', async e => {
+    e.preventDefault();
+    dragDepth = 0;
+    setDropUI(false);
+
+    const files = e.dataTransfer?.files;
+    if (!files?.length) return;
+    await loadIFCFromFile(files[0]);
+  });
 }
 
 // ── Lecture des infos projet ──────────────────────────────────────────────────
@@ -522,153 +627,160 @@ async function readSpatialStructure(mid) {
 }
 
 // ── Extraction de tous les éléments ──────────────────────────────────────────
-async function extractElements(mid, progress) {
+function collectExpressIDsFromMesh(mesh) {
+  const ids = new Set();
+  if (!mesh) return [];
+  mesh.traverse(node => {
+    if (!node?.isMesh || !node.geometry) return;
+    const a = node.geometry.getAttribute('expressID')
+           || node.geometry.getAttribute('expressId')
+           || node.geometry.getAttribute('ifcExpressID');
+    if (!a || !a.count) return;
+    for (let i = 0; i < a.count; i++) {
+      const val = a.getX(i);
+      if (Number.isFinite(val) && val > 0) ids.add(val);
+    }
+  });
+  return [...ids];
+}
+
+async function extractElements(mid, modelMesh, progress) {
   const mgr  = ifcLoader.ifcManager;
-  let typeNums = [];
-  // 1. Prendre tous les types connus (GEOM_TYPES)
-  typeNums = [...Object.values(GEOM_TYPES)];
-  // 2. Ajouter dynamiquement tous les types présents dans le modèle
-  try {
-    const allIDs = await mgr.getAllItemsOfType(mid, null, false); // null = tous les objets
-    const allTypes = new Set();
-    for (const eid of allIDs) {
-      const props = await mgr.getItemProperties(mid, eid, false);
-      if (props && props.type) allTypes.add(props.type);
+  let expressIDs = collectExpressIDsFromMesh(modelMesh);
+
+  // Fallback si l'attribut expressID n'est pas présent dans la géométrie
+  if (!expressIDs.length) {
+    const fallbackTypes = [...new Set(Object.values(GEOM_TYPES))];
+    for (const typeNum of fallbackTypes) {
+      try {
+        const ids = await mgr.getAllItemsOfType(mid, typeNum, false);
+        (ids || []).forEach(id => expressIDs.push(id));
+      } catch {}
     }
-    for (const t of allTypes) {
-      if (!typeNums.includes(t)) typeNums.push(t);
-    }
-  } catch {}
+    expressIDs = [...new Set(expressIDs)];
+  }
 
   let done = 0;
-  for (const typeNum of typeNums) {
-    let ids;
-    try { ids = await mgr.getAllItemsOfType(mid, typeNum, false); }
-    catch { continue; }
-    if (!ids?.length) continue;
-
-    // Calque métier ou nom générique
-    let layerName = classifyType(typeNum);
-    if (!layerName) layerName = `IFC_${typeNum}`;
-    if (!Groups[layerName]) Groups[layerName] = [];
-
-    for (const eid of ids) {
-      const objId = `ifc_${eid}`;
-      // Si déjà créé, on référence le mesh existant dans le groupe
-      if (BIMObjects[objId]) {
-        Groups[layerName].push(BIMObjects[objId].mesh);
-        continue;
-      }
-
-      try {
-        // ── Propriétés identité ─────────────────────────────────────────────
-        const props = await mgr.getItemProperties(mid, eid, false);
-        const name  = strVal(props?.Name) || strVal(props?.LongName)
-                   || strVal(props?.Description) || `${ifcTypeName(typeNum)} #${eid}`;
-        const objectType = strVal(props?.ObjectType) || strVal(props?.Tag) || '';
-        const tag        = strVal(props?.Tag) || '';
-
-        // ── Famille/Type (IfcRelDefinesByType) ─────────────────────────────
-        let familyName  = objectType;
-        let familyProps = {};
-        try {
-          const typeRels = await mgr.getTypeProperties(mid, eid, false);
-          if (typeRels?.length) {
-            const tr  = typeRels[0];
-            const fn  = strVal(tr?.Name) || strVal(tr?.LongName);
-            if (fn) familyName = fn;
-            if (tr?.Description?.value) familyProps['Desc. famille'] = tr.Description.value;
-            if (tr?.ApplicableOccurrence?.value) familyProps['Occurrence'] = tr.ApplicableOccurrence.value;
-          }
-        } catch {}
-
-        // ── PropertySets (Pset_*) ───────────────────────────────────────────
-        const psets = {};
-        try {
-          const psData = await mgr.getPropertySets(mid, eid, true);
-          for (const ps of (psData || [])) {
-            const psName = strVal(ps?.Name) || 'Pset';
-            for (const prop of (ps?.HasProperties || [])) {
-              const k = strVal(prop?.Name);
-              const v = prop?.NominalValue?.value ?? prop?.Value?.value;
-              if (k && v != null) psets[`${psName}::${k}`] = String(v);
-            }
-            // BaseQuantities
-            for (const qty of (ps?.Quantities || [])) {
-              const k = strVal(qty?.Name);
-              const v = qty?.LengthValue?.value  ?? qty?.AreaValue?.value
-                     ?? qty?.VolumeValue?.value  ?? qty?.WeightValue?.value
-                     ?? qty?.CountValue?.value   ?? qty?.TimeValue?.value;
-              if (k && v != null) psets[`${psName}::${k}`] = fmtQty(k, v);
-            }
-          }
-        } catch {}
-
-        // ── Matériaux ────────────────────────────────────────────────────────
-        let materiaux = '';
-        try {
-          const matData = await mgr.getMaterialsProperties(mid, eid, true);
-          const names = (matData || [])
-            .map(m => strVal(m?.Name) || strVal(m?.Category))
-            .filter(Boolean);
-          if (names.length) materiaux = names.join(', ');
-        } catch {}
-
-        // ── Niveau (storey) — lookup O(1) dans l'index préconstruit ───────
-        const _sn = findStorey(mid, eid);
-        let storeyName = _sn || '—';
-
-        // ── Familles ─────────────────────────────────────────────────────────
-        if (familyName) {
-          if (!Families[familyName]) Families[familyName] = [];
-          Families[familyName].push(eid);
-        }
-        // ── Index Storeys ────────────────────────────────────────────────────
-        if (storeyName !== '—') {
-          if (!Storeys[storeyName]) Storeys[storeyName] = [];
-          Storeys[storeyName].push(eid);
-        }
-
-        // ── Subset Three.js ──────────────────────────────────────────────────
-        const subset = mgr.createSubset({
-          modelID: mid, ids: [eid], scene,
-          removePrevious: false, customID: objId,
-          material: layerMat(layerName),
-        });
-        if (!subset) continue;
-        subset.userData = { id: objId, name, layer: layerName, expressID: eid };
-
-        // ── Assemblage des props affichées ───────────────────────────────────
-        const finalProps = {
-          'Type IFC':   ifcTypeName(typeNum),
-          'Nom':        name,
-          ...(objectType && objectType !== name ? { 'Type objet': objectType } : {}),
-          ...(tag && tag !== name && tag !== objectType ? { 'Repère': tag } : {}),
-          ...(familyName && familyName !== name && familyName !== objectType ? { 'Famille / Type': familyName } : {}),
-          ...(materiaux ? { 'Matériaux': materiaux } : {}),
-          'Niveau':     storeyName,
-          'ExpressID':  eid,
-          ...familyProps,
-          ...psets,
-        };
-
-        BIMObjects[objId] = {
-          mesh: subset, name,
-          type: layerName,
-          props: finalProps,
-          expressID: eid, modelID: mid,
-          familyType: familyName,
-          storey: storeyName,
-        };
-        Groups[layerName].push(subset);
-        const g = subset.geometry;
-        if (g?.index) totalTris += g.index.count / 3;
-
-      } catch { continue; }
+  for (const eid of expressIDs) {
+    const objId = `ifc_${eid}`;
+    if (BIMObjects[objId]) {
+      done++;
+      if (done % 100 === 0 || done === expressIDs.length) progress(`Extraction… ${done}/${expressIDs.length} éléments`);
+      continue;
     }
 
+    try {
+      const props = await mgr.getItemProperties(mid, eid, false);
+      let typeNum = null;
+      try {
+        if (typeof mgr.getIfcType === 'function') typeNum = mgr.getIfcType(mid, eid);
+      } catch {}
+      if (typeof typeNum !== 'number') typeNum = props?.type;
+
+      const typeLabel = ifcTypeName(typeNum);
+      const name  = strVal(props?.Name) || strVal(props?.LongName)
+                 || strVal(props?.Description) || `${typeLabel} #${eid}`;
+      const objectType = strVal(props?.ObjectType) || strVal(props?.Tag) || '';
+      const tag        = strVal(props?.Tag) || '';
+
+      let familyName  = objectType;
+      let familyProps = {};
+      try {
+        const typeRels = await mgr.getTypeProperties(mid, eid, false);
+        if (typeRels?.length) {
+          const tr  = typeRels[0];
+          const fn  = strVal(tr?.Name) || strVal(tr?.LongName);
+          if (fn) familyName = fn;
+          if (tr?.Description?.value) familyProps['Desc. famille'] = tr.Description.value;
+          if (tr?.ApplicableOccurrence?.value) familyProps['Occurrence'] = tr.ApplicableOccurrence.value;
+        }
+      } catch {}
+
+      const layerName = resolveLayerName(typeNum, name, objectType, familyName);
+      if (!Groups[layerName]) Groups[layerName] = [];
+
+      const psets = {};
+      try {
+        const psData = await mgr.getPropertySets(mid, eid, true);
+        for (const ps of (psData || [])) {
+          const psName = strVal(ps?.Name) || 'Pset';
+          for (const prop of (ps?.HasProperties || [])) {
+            const k = strVal(prop?.Name);
+            const v = prop?.NominalValue?.value ?? prop?.Value?.value;
+            if (k && v != null) psets[`${psName}::${k}`] = String(v);
+          }
+          for (const qty of (ps?.Quantities || [])) {
+            const k = strVal(qty?.Name);
+            const v = qty?.LengthValue?.value  ?? qty?.AreaValue?.value
+                   ?? qty?.VolumeValue?.value  ?? qty?.WeightValue?.value
+                   ?? qty?.CountValue?.value   ?? qty?.TimeValue?.value;
+            if (k && v != null) psets[`${psName}::${k}`] = fmtQty(k, v);
+          }
+        }
+      } catch {}
+
+      let materiaux = '';
+      try {
+        const matData = await mgr.getMaterialsProperties(mid, eid, true);
+        const names = (matData || [])
+          .map(m => strVal(m?.Name) || strVal(m?.Category))
+          .filter(Boolean);
+        if (names.length) materiaux = names.join(', ');
+      } catch {}
+
+      const _sn = findStorey(mid, eid);
+      const storeyName = _sn || '—';
+
+      if (familyName) {
+        if (!Families[familyName]) Families[familyName] = [];
+        Families[familyName].push(eid);
+      }
+      if (storeyName !== '—') {
+        if (!Storeys[storeyName]) Storeys[storeyName] = [];
+        Storeys[storeyName].push(eid);
+      }
+
+      const subset = mgr.createSubset({
+        modelID: mid, ids: [eid], scene,
+        removePrevious: false, customID: objId,
+        material: layerMat(layerName),
+      });
+      if (!subset) {
+        done++;
+        if (done % 100 === 0 || done === expressIDs.length) progress(`Extraction… ${done}/${expressIDs.length} éléments`);
+        continue;
+      }
+      subset.userData = { id: objId, name, layer: layerName, expressID: eid };
+
+      const finalProps = {
+        'Type IFC':   typeLabel,
+        'Nom':        name,
+        ...(objectType && objectType !== name ? { 'Type objet': objectType } : {}),
+        ...(tag && tag !== name && tag !== objectType ? { 'Repère': tag } : {}),
+        ...(familyName && familyName !== name && familyName !== objectType ? { 'Famille / Type': familyName } : {}),
+        ...(materiaux ? { 'Matériaux': materiaux } : {}),
+        'Niveau':     storeyName,
+        'ExpressID':  eid,
+        ...familyProps,
+        ...psets,
+      };
+
+      BIMObjects[objId] = {
+        mesh: subset, name,
+        type: layerName,
+        props: finalProps,
+        expressID: eid, modelID: mid,
+        familyType: familyName,
+        storey: storeyName,
+      };
+      Groups[layerName].push(subset);
+      const g = subset.geometry;
+      if (g?.index) totalTris += g.index.count / 3;
+
+    } catch {}
+
     done++;
-    progress(`Extraction… ${done}/${typeNums.length} types IFC`);
+    if (done % 100 === 0 || done === expressIDs.length) progress(`Extraction… ${done}/${expressIDs.length} éléments`);
   }
 }
 
@@ -723,6 +835,8 @@ function fmtQty(key, val) {
   return String(Math.round(+val * 1000) / 1000);
 }
 function ifcTypeName(n) {
+  if (typeof n !== 'number') return 'IFC_UNKNOWN';
+  if (IFC_TYPE_NAME_BY_CODE[n]) return IFC_TYPE_NAME_BY_CODE[n];
   for (const [k, v] of Object.entries(GEOM_TYPES)) if (v === n) return k;
   for (const [k, v] of Object.entries(META_TYPES)) if (v === n) return k;
   return `IFC_${n}`;
@@ -998,6 +1112,106 @@ function showWelcome(list) {
 //  SÉLECTION + PANNEAU PROPRIÉTÉS
 // ═════════════════════════════════════════════════════════════════════════════
 const origMats = {};
+const _selectionViz = {
+  outline: null,
+  worldCenter: new THREE.Vector3(),
+  screenTarget: new THREE.Vector2(),
+  screenSmooth: new THREE.Vector2(),
+  anchorBox: new THREE.Box3(),
+  lastTs: 0,
+};
+
+function clearSelectionViz() {
+  const label = document.getElementById('highlight-label');
+  if (label) {
+    label.classList.remove('visible');
+    label.style.display = 'none';
+    label.style.transform = 'translate3d(-9999px, -9999px, 0) translate(-50%, -50%)';
+    label.textContent = '';
+  }
+  if (_selectionViz.outline) {
+    if (_selectionViz.outline.parent) _selectionViz.outline.parent.remove(_selectionViz.outline);
+    _selectionViz.outline.geometry?.dispose?.();
+    _selectionViz.outline.material?.dispose?.();
+    _selectionViz.outline = null;
+  }
+}
+
+function updateSelectionLabel() {
+  const label = document.getElementById('highlight-label');
+  if (!label || !selectedId || !BIMObjects[selectedId]) return;
+
+  const obj = BIMObjects[selectedId];
+  if (obj?.mesh) {
+    _selectionViz.anchorBox.makeEmpty().expandByObject(obj.mesh);
+    if (!_selectionViz.anchorBox.isEmpty()) {
+      _selectionViz.anchorBox.getCenter(_selectionViz.worldCenter);
+    }
+  }
+
+  const p = _selectionViz.worldCenter.clone().project(camera);
+  if (p.z < -1 || p.z > 1) {
+    label.classList.remove('visible');
+    label.style.display = 'none';
+    return;
+  }
+
+  const x = (p.x * 0.5 + 0.5) * wrap.clientWidth;
+  const y = (-p.y * 0.5 + 0.5) * wrap.clientHeight;
+
+  _selectionViz.screenTarget.set(x, y);
+  if (_selectionViz.lastTs === 0) {
+    _selectionViz.screenSmooth.copy(_selectionViz.screenTarget);
+  } else {
+    _selectionViz.screenSmooth.lerp(_selectionViz.screenTarget, 0.22);
+  }
+
+  label.style.transform = `translate3d(${_selectionViz.screenSmooth.x.toFixed(2)}px, ${_selectionViz.screenSmooth.y.toFixed(2)}px, 0) translate(-50%, -50%)`;
+  label.style.display = 'block';
+  label.classList.add('visible');
+}
+
+function buildSelectionOutline(mesh) {
+  if (!mesh?.geometry) return null;
+  const edges = new THREE.EdgesGeometry(mesh.geometry, 28);
+  const mat = new THREE.LineBasicMaterial({
+    color: 0x00e5c0,
+    transparent: true,
+    opacity: 0.92,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const line = new THREE.LineSegments(edges, mat);
+  line.matrix.copy(mesh.matrixWorld);
+  line.matrixAutoUpdate = false;
+  line.renderOrder = 999;
+  line.userData = { selectionOutline: true };
+  return line;
+}
+
+function setSelectionViz(obj) {
+  clearSelectionViz();
+  if (!obj?.mesh) return;
+
+  const label = document.getElementById('highlight-label');
+  if (label) {
+    label.textContent = `${obj.name} · ${obj.type}`;
+  }
+
+  _selectionViz.anchorBox.makeEmpty().expandByObject(obj.mesh);
+  _selectionViz.anchorBox.getCenter(_selectionViz.worldCenter);
+  const p = _selectionViz.worldCenter.clone().project(camera);
+  _selectionViz.screenTarget.set((p.x * 0.5 + 0.5) * wrap.clientWidth, (-p.y * 0.5 + 0.5) * wrap.clientHeight);
+  _selectionViz.screenSmooth.copy(_selectionViz.screenTarget);
+  _selectionViz.lastTs = 0;
+
+  const outline = buildSelectionOutline(obj.mesh);
+  if (outline) {
+    _selectionViz.outline = outline;
+    scene.add(outline);
+  }
+  updateSelectionLabel();
+}
 
 function selectObject(id, listItem) {
   // Désélectionner le précédent
@@ -1006,22 +1220,32 @@ function selectObject(id, listItem) {
   }
   document.querySelectorAll('.layer-item.selected').forEach(el => el.classList.remove('selected'));
 
-  if (selectedId === id) { selectedId = null; showPropPanel(null); return; }
+  if (selectedId === id) {
+    selectedId = null;
+    clearSelectionViz();
+    showPropPanel(null);
+    return;
+  }
 
   selectedId = id;
   const obj = BIMObjects[id];
-  if (!obj) return;
+  if (!obj) {
+    clearSelectionViz();
+    return;
+  }
 
   // Highlight
   if (!origMats[id]) origMats[id] = obj.mesh.material;
   const hl = obj.mesh.material.clone();
   hl.emissive = new THREE.Color(0x3d8eff);
-  hl.emissiveIntensity = 0.55;
+  hl.emissiveIntensity = 0.85;
+  if (hl.color) hl.color.offsetHSL(0, 0.02, 0.08);
   obj.mesh.material = hl;
 
   if (listItem) listItem.classList.add('selected');
   else document.querySelector(`.layer-item[data-id="${id}"]`)?.classList.add('selected');
 
+  setSelectionViz(obj);
   showPropPanel(obj);
 }
 
@@ -1056,32 +1280,48 @@ function showPropPanel(obj) {
 
   function rows(data) {
     return Object.entries(data)
-      .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)
+      .map(([k, v]) => `<tr><td title="${k}"><span class="prop-cell" title="${k}">${k}</span></td><td title="${v}"><span class="prop-cell" title="${v}">${v}</span></td></tr>`)
       .join('');
   }
 
-  let html = `
-    <div class="prop-section">
-      <div class="prop-label">Élément sélectionné</div>
-      <div class="prop-name">${obj.name}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-        <span style="font-size:9px;font-family:'Space Mono',monospace;color:#${hex};background:rgba(${hexRgb(def.color)},0.13);padding:2px 9px;border-radius:10px">${obj.type}</span>
-        ${obj.storey && obj.storey!=='—' ? `<span style="font-size:9px;font-family:'Space Mono',monospace;color:#00e5c0;background:rgba(0,229,192,0.1);padding:2px 9px;border-radius:10px">🏢 ${obj.storey}</span>` : ''}
-        ${obj.familyType ? `<span style="font-size:9px;font-family:'Space Mono',monospace;color:#9ca3af;background:rgba(156,163,175,0.1);padding:2px 9px;border-radius:10px">📦 ${obj.familyType}</span>` : ''}
+  function sectionBlock(title, contentHtml) {
+    return `<div class="prop-section">
+      <div class="prop-head">
+        <div class="prop-label" title="${title}">${title}</div>
+        <button class="prop-toggle" type="button" title="Plier / Déplier" aria-label="Plier ou déplier la section" aria-expanded="true">▾</button>
       </div>
+      <div class="prop-content-inner">${contentHtml}</div>
     </div>`;
+  }
+
+  let html = sectionBlock('Élément sélectionné', `
+      <div class="prop-name">${obj.name}</div>
+      <div class="prop-badges">
+        <span class="prop-badge" title="${obj.type}" style="font-size:9px;font-family:'Space Mono',monospace;color:#${hex};background:rgba(${hexRgb(def.color)},0.13);padding:2px 9px;border-radius:10px">${obj.type}</span>
+        ${obj.storey && obj.storey!=='—' ? `<span class="prop-badge" title="${obj.storey}" style="font-size:9px;font-family:'Space Mono',monospace;color:#00e5c0;background:rgba(0,229,192,0.1);padding:2px 9px;border-radius:10px">🏢 ${obj.storey}</span>` : ''}
+        ${obj.familyType ? `<span class="prop-badge" title="${obj.familyType}" style="font-size:9px;font-family:'Space Mono',monospace;color:#9ca3af;background:rgba(156,163,175,0.1);padding:2px 9px;border-radius:10px">📦 ${obj.familyType}</span>` : ''}
+      </div>
+    `);
 
   if (Object.keys(identity).length) {
-    html += `<div class="prop-section"><div class="prop-label">Identité IFC</div>
-      <table class="prop-table">${rows(identity)}</table></div>`;
+    html += sectionBlock('Identité IFC', `<table class="prop-table">${rows(identity)}</table>`);
   }
   for (const [grpName, grpData] of Object.entries(psetGroups)) {
     if (!Object.keys(grpData).length) continue;
-    html += `<div class="prop-section"><div class="prop-label">${grpName}</div>
-      <table class="prop-table">${rows(grpData)}</table></div>`;
+    html += sectionBlock(grpName, `<table class="prop-table">${rows(grpData)}</table>`);
   }
 
   panel.innerHTML = html;
+
+  panel.querySelectorAll('.prop-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const section = btn.closest('.prop-section');
+      if (!section) return;
+      section.classList.toggle('collapsed');
+      const expanded = !section.classList.contains('collapsed');
+      btn.setAttribute('aria-expanded', String(expanded));
+    });
+  });
 }
 
 function hexRgb(hex) {
@@ -1181,33 +1421,82 @@ function flyTo(newTarget, newR, newPhi, newTheta) {
   }
   flyAnim = requestAnimationFrame(tick);
 }
+
+function getFitDistanceForBox(box, padding = 1.22) {
+  const size = new THREE.Vector3();
+  box.getSize(size);
+
+  const vFov = THREE.MathUtils.degToRad(camera.fov);
+  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+
+  const fitHeight = size.y / (2 * Math.tan(vFov / 2));
+  const fitWidth  = size.x / (2 * Math.tan(hFov / 2));
+  const fitDepth  = size.z * 0.7;
+
+  const dist = Math.max(fitHeight, fitWidth, fitDepth);
+  return Math.max(dist * padding, 0.35);
+}
+
+function flyToBox(box, phi = 0.75, theta = sph.theta) {
+  if (!box || box.isEmpty()) return;
+  const c = new THREE.Vector3();
+  box.getCenter(c);
+  const r = getFitDistanceForBox(box);
+
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  camera.far = Math.max(camera.far, r + size.length() * 12, 1000);
+  camera.updateProjectionMatrix();
+
+  flyTo(c, r, phi, theta);
+}
+
+function getPreciseBoxForExpressID(expressID) {
+  if (!modelMesh_current || typeof expressID !== 'number') return null;
+
+  const box = new THREE.Box3();
+  let found = false;
+  const point = new THREE.Vector3();
+
+  modelMesh_current.updateWorldMatrix(true, true);
+  modelMesh_current.traverse(node => {
+    if (!node?.isMesh || !node.geometry) return;
+    const geom = node.geometry;
+    const pos = geom.getAttribute('position');
+    const ids = geom.getAttribute('expressID')
+             || geom.getAttribute('expressId')
+             || geom.getAttribute('ifcExpressID');
+    if (!pos || !ids || !pos.count || !ids.count) return;
+
+    node.updateWorldMatrix(true, false);
+    const wm = node.matrixWorld;
+
+    for (let i = 0; i < pos.count; i++) {
+      if (ids.getX(i) !== expressID) continue;
+      point.fromBufferAttribute(pos, i).applyMatrix4(wm);
+      box.expandByPoint(point);
+      found = true;
+    }
+  });
+
+  return found && !box.isEmpty() ? box : null;
+}
+
 function focusObject(id) {
   const obj = BIMObjects[id]; if (!obj) return;
   selectObject(id, null);
 
-  // S'assurer que la géométrie a une bounding box calculée
-  const mesh = obj.mesh;
-  if (mesh.geometry && !mesh.geometry.boundingBox) {
-    mesh.geometry.computeBoundingBox();
-  }
-  // Forcer la mise à jour de la matrice monde
-  mesh.updateWorldMatrix(true, true);
-
-  const box = new THREE.Box3();
-  box.expandByObject(mesh);
+  const preciseBox = getPreciseBoxForExpressID(obj.expressID);
+  const box = preciseBox || new THREE.Box3().expandByObject(obj.mesh);
 
   if (box.isEmpty()) {
     console.warn('[BIM] focusObject: bounding box vide pour', id);
     return;
   }
 
-  const c  = new THREE.Vector3();
-  const sz = new THREE.Vector3();
+  const c = new THREE.Vector3();
   box.getCenter(c);
-  box.getSize(sz);
-
-  // Rayon adapté à la taille de l'objet, minimum 1 m
-  const r = Math.max(sz.length() * 1.5, 1);
+  const r = getFitDistanceForBox(box, preciseBox ? 1.06 : 1.16);
   flyTo(c, r, 0.7, sph.theta);
 
   // Flash visuel sur l'objet
@@ -1219,17 +1508,13 @@ function focusGroup(name) {
   const ms=Groups[name]; if (!ms?.length) return;
   const box=new THREE.Box3(); ms.forEach(m=>{if(m.visible)box.expandByObject(m);});
   if(box.isEmpty())return;
-  const c=new THREE.Vector3(), sz=new THREE.Vector3();
-  box.getCenter(c); box.getSize(sz);
-  flyTo(c, Math.max(sz.length()*1.4, 5), 0.75, sph.theta);
+  flyToBox(box, 0.75, sph.theta);
 }
 function focusByExpressIDs(ids) {
   const box=new THREE.Box3();
   ids.forEach(eid=>{const o=BIMObjects[`ifc_${eid}`]; if(o?.mesh?.visible)box.expandByObject(o.mesh);});
   if(box.isEmpty())return;
-  const c=new THREE.Vector3(), sz=new THREE.Vector3();
-  box.getCenter(c); box.getSize(sz);
-  flyTo(c, Math.max(sz.length()*1.4, 5), 0.75, sph.theta);
+  flyToBox(box, 0.75, sph.theta);
 }
 function fitCameraToModel() {
   const box=new THREE.Box3();
@@ -1237,7 +1522,7 @@ function fitCameraToModel() {
   if(box.isEmpty())return;
   const c=new THREE.Vector3(), sz=new THREE.Vector3();
   box.getCenter(c); box.getSize(sz);
-  flyTo(c, sz.length()*1.35, 0.75, 0.6);
+  flyToBox(box, 0.75, 0.6);
   // Ajuster le far de la caméra au modèle
   camera.far = sz.length() * 20;
   camera.updateProjectionMatrix();
@@ -1359,7 +1644,12 @@ function resize() {
 }
 resize();
 window.addEventListener('resize', resize);
-function animate() { requestAnimationFrame(animate); renderer.render(scene,camera); }
+function animate() {
+  requestAnimationFrame(animate);
+  _selectionViz.lastTs = performance.now();
+  updateSelectionLabel();
+  renderer.render(scene,camera);
+}
 animate();
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1377,6 +1667,7 @@ async function init() {
   document.getElementById('hud-front') ?.addEventListener('click', ()=>setView('front'));
   document.getElementById('hud-iso')   ?.addEventListener('click', ()=>setView('iso'));
   document.getElementById('ifc-file')  ?.addEventListener('change', e=>loadIFCFile(e.target));
+  setupIFCDragDrop();
 
   initIFC().catch(e=>console.warn('[BIM] WASM:', e.message));
 
