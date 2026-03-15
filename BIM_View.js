@@ -2017,12 +2017,22 @@ function setLoadingMsg(msg) {
 // ═════════════════════════════════════════════════════════════════════════════
 //  RESIZE + RENDER LOOP
 // ═════════════════════════════════════════════════════════════════════════════
-function resize() {
-  const w=wrap.clientWidth, h=wrap.clientHeight;
-  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+function resize(w, h) {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
 }
-resize();
-window.addEventListener('resize', resize);
+
+let _resizeRaf = 0;
+new ResizeObserver(entries => {
+  cancelAnimationFrame(_resizeRaf);
+  _resizeRaf = requestAnimationFrame(() => {
+    const { width, height } = entries[0].contentRect;
+    if (width > 0 && height > 0) resize(width, height);
+  });
+}).observe(wrap);
+resize(wrap.clientWidth, wrap.clientHeight);
 function updateHoverTransition() {
   if (hoverTransitionTarget === hoverTransitionProgress) return; // Pas de changement
   
