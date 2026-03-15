@@ -23,7 +23,6 @@ const GEOM_TYPES = {
   // Gros-Œuvre / Enveloppe
   IFCWALLSTANDARDCASE:  ifc('IFCWALLSTANDARDCASE',  2502776645),
   IFCWALL:              ifc('IFCWALL',              3701648758),
-  IFCWALLTYPE:          ifc('IFCWALLTYPE',          1898987631),
   IFCSLAB:              ifc('IFCSLAB',              1529196076),
   IFCROOF:              ifc('IFCROOF',              2016517767),
   IFCCURTAINWALL:       ifc('IFCCURTAINWALL',       3495092785),
@@ -79,7 +78,7 @@ const GEOM_TYPES = {
   IFCALARM:             ifc('IFCALARM',             3087945054),
   IFCELECTRICMOTOR:     ifc('IFCELECTRICMOTOR',     1090812506),
   IFCTRANSFORMER:       ifc('IFCTRANSFORMER',       3825984169),
-  IFCCABLESEGMENT:      ifc('IFCCABLESEGMENT',      4217484030),
+  IFCCABLESEGMENT:      ifc('IFCCABLESEGMENT',      3404827852),
   IFCCABLEFITTING:      ifc('IFCCABLEFITTING',      2938052489),
   // Espaces
   IFCSPACE:             ifc('IFCSPACE',             3856911033),
@@ -97,25 +96,39 @@ const GEOM_TYPES = {
   IFCTRANSPORTDEVICE:   ifc('IFCTRANSPORTDEVICE',   3815607619),
   // Finitions
   IFCCOVERING:          ifc('IFCCOVERING',          1973544240),
-  IFCCOVERINGTYPE:      ifc('IFCCOVERINGTYPE',      1916426348),
-  IFCFLOORINGTYPE:      ifc('IFCFLOORINGTYPE',      3009204131),
+};
+
+// Types IFC (gabarits partages) - pas de geometrie propre.
+// Utilises pour la navigation et la lecture de proprietes communes,
+// jamais passes a createSubset() ni getAllItemsOfType() lors de l'extraction.
+const TYPE_TYPES = {
+  IFCWALLTYPE:     ifc('IFCWALLTYPE',     1898987631),
+  IFCCOVERINGTYPE: ifc('IFCCOVERINGTYPE', 1916426348),
+  IFCFLOORINGTYPE: ifc('IFCFLOORINGTYPE', 3009204131),
 };
 
 // ── Types non-géométriques utiles pour l'analyse ──────────────────────────────
 const META_TYPES = {
   IFCPROJECT:           ifc('IFCPROJECT',           103090709),
-  IFCSITE:              ifc('IFCSITE',              4097777520),
+  IFCSITE:              ifc('IFCSITE',              4203026979),
   IFCBUILDING:          ifc('IFCBUILDING',          4031249490),
   IFCBUILDINGSTOREY:    ifc('IFCBUILDINGSTOREY',    3124254112),
+  IFCSYSTEM:            ifc('IFCSYSTEM',            2252143143),
+  IFCBUILDINGSYSTEM:    ifc('IFCBUILDINGSYSTEM',    1177604601),
+  IFCDISTRIBUTIONSYSTEM: ifc('IFCDISTRIBUTIONSYSTEM', 15328376),
+  IFCRELASSIGNSTOGROUP: ifc('IFCRELASSIGNSTOGROUP', 602761598),
   IFCRELCONTAINEDINSPATIALSTRUCTURE: ifc('IFCRELCONTAINEDINSPATIALSTRUCTURE', 3242617779),
   IFCRELAGGREGATES:     ifc('IFCRELAGGREGATES',     2551354335),
   IFCRELDEFINESBYTYPE:  ifc('IFCRELDEFINESBYTYPE',  781010003),
   IFCRELDEFINESBYPROPERTIES: ifc('IFCRELDEFINESBYPROPERTIES', 4186316022),
+  IFCRELASSOCIATESCLASSIFICATION: ifc('IFCRELASSOCIATESCLASSIFICATION', 919958153),
+  IFCCLASSIFICATIONREFERENCE: ifc('IFCCLASSIFICATIONREFERENCE', 647756555),
+  IFCCLASSIFICATION: ifc('IFCCLASSIFICATION', 75554418),
   IFCMATERIAL:          ifc('IFCMATERIAL',          1440319273),
   IFCMATERIALLAYERSET:  ifc('IFCMATERIALLAYERSET',  3303938423),
 };
 
-// ── Classification : typeNum → calque métier ─────────────────────────────────
+// ── Classification : typeNum → catégorie métier dérivée ──────────────────────
 // Tableaux hissés en constantes de module (perf : ne sont plus recréés à chaque appel)
 const _CL_GO     = new Set([GEOM_TYPES.IFCWALLSTANDARDCASE, GEOM_TYPES.IFCWALL, GEOM_TYPES.IFCSLAB, GEOM_TYPES.IFCROOF, GEOM_TYPES.IFCCURTAINWALL]);
 const _CL_STRUCT = new Set([GEOM_TYPES.IFCCOLUMN, GEOM_TYPES.IFCBEAM, GEOM_TYPES.IFCFOOTING, GEOM_TYPES.IFCPILE, GEOM_TYPES.IFCPLATE, GEOM_TYPES.IFCMEMBER, GEOM_TYPES.IFCSTAIR, GEOM_TYPES.IFCSTAIRFLIGHT, GEOM_TYPES.IFCRAMP, GEOM_TYPES.IFCRAMPFLIGHT, GEOM_TYPES.IFCRAILING]);
@@ -131,7 +144,7 @@ const _CL_GENERIC = new Set([
   GEOM_TYPES.IFCDISCRETEACCESSORY,
   GEOM_TYPES.IFCPROXY,
 ]);
-const _CL_FIN    = new Set([GEOM_TYPES.IFCCOVERING, GEOM_TYPES.IFCCOVERINGTYPE, GEOM_TYPES.IFCFLOORINGTYPE]);
+const _CL_FIN    = new Set([GEOM_TYPES.IFCCOVERING]);
 
 function classifyType(n) {
   if (_CL_GO.has(n))     return 'Gros-Œuvre';
@@ -157,18 +170,23 @@ function looksLikeFurniture(...parts) {
   return /(mobilier|furniture|furnishing|chair|table|desk|sofa|cabinet|armoire|meuble|lit|bed|seating|seat|banquette|bureau|chaise|fauteuil|canape|canapé)/.test(txt);
 }
 
-function resolveLayerName(typeNum, name, objectType, familyName) {
+const FURNITURE_PREDEFINED = new Set([
+  'CHAIR', 'TABLE', 'DESK', 'BED', 'SOFA', 'SHELF', 'FILING',
+  'WORKSURFACE', 'LOCKER', 'USERDEFINED', 'NOTDEFINED'
+]);
+
+function resolveLayerName(typeNum, name, objectType, familyName, predefinedType) {
   const base = classifyType(typeNum);
-  if (base === 'Objets génériques' && looksLikeFurniture(name, objectType, familyName)) {
-    return 'Mobilier';
-  }
-  if (!base && looksLikeFurniture(name, objectType, familyName)) {
+  const isFurnitureByType = _CL_FURN.has(typeNum);
+  const isFurnitureByPdef = predefinedType && FURNITURE_PREDEFINED.has(predefinedType.toUpperCase());
+  const isFurnitureByHint = (base === 'Objets génériques' || !base) && looksLikeFurniture(name, objectType, familyName);
+  if (isFurnitureByType || isFurnitureByPdef || isFurnitureByHint) {
     return 'Mobilier';
   }
   return base || `IFC_${typeNum}`;
 }
 
-// ── Définitions visuelles par calque ─────────────────────────────────────────
+// ── Définitions visuelles par catégorie dérivée ──────────────────────────────
 const LAYER_DEFS = {
   'Gros-Œuvre':        { color: 0xaedcff, emissive: 0x141820, icon: '🏗', shininess: 12 },
   'Structure':         { color: 0x7a8898, emissive: 0x0c1018, icon: '🔩', shininess: 8  },
@@ -181,7 +199,7 @@ const LAYER_DEFS = {
   'Mobilier':          { color: 0xd4a574, emissive: 0x1a1008, icon: '🪑', shininess: 28 },
   'Finitions':         { color: 0xe8dfc0, emissive: 0x181408, icon: '🎨', shininess: 10 },
 };
-// Couleurs supplémentaires pour calques dynamiques inconnus
+// Couleurs supplémentaires pour catégories dynamiques inconnues
 const EXTRA_COLORS = [0xe74c3c,0x2ecc71,0x9b59b6,0xf39c12,0x1abc9c,0xe91e63,0x00bcd4,0xff5722];
 let _extraColorIdx = 0;
 function layerDef(name) {
@@ -252,8 +270,20 @@ async function initIFC() {
     await ifcLoader.ifcManager.setWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.36/', true);
     if (typeof ifcLoader.ifcManager.applyWebIfcConfig === 'function')
       await ifcLoader.ifcManager.applyWebIfcConfig({ USE_FAST_BOOLS: true });
-    if (typeof ifcLoader.ifcManager.parser?.setupOptionalCategories === 'function')
-      await ifcLoader.ifcManager.parser.setupOptionalCategories({ [GEOM_TYPES.IFCSPACE]: true });
+    const _IFC_BINDINGS_REQUIRED = [
+      'IFCPROJECT',
+      'IFCSITE',
+      'IFCBUILDING',
+      'IFCBUILDINGSTOREY',
+      'IFCRELCONTAINEDINSPATIALSTRUCTURE',
+      'IFCRELASSIGNSTOGROUP',
+    ];
+    const missingBindings = _IFC_BINDINGS_REQUIRED.filter(name => W[name] === undefined);
+    if (missingBindings.length) {
+      console.warn(
+        `[BIM] Constantes web-ifc absentes (${missingBindings.join(', ')}). Les fallback locaux seront utilises.`
+      );
+    }
     ifcReady = true;
     console.log('[BIM] IFC WASM ready');
   } catch(e) {
@@ -263,8 +293,17 @@ async function initIFC() {
 }
 
 // ── Stores ────────────────────────────────────────────────────────────────────
-const BIMObjects = {}; // objId → { mesh, name, type(layer), props, expressID, modelID, familyType, storey }
-const Groups     = {}; // layerName   → mesh[]
+const BIMStore = {
+  byId: {},         // expressID → objet complet (source de vérité)
+  byIfcType: {},    // IFCWALL → Set<expressID>
+  byCategory: {},   // catégorie métier dérivée → Set<expressID>
+  byStorey: {},     // storeyName → Set<expressID>
+  bySystem: {},     // réservé aux IfcSystem / IfcDistributionSystem
+  byMaterial: {},   // materialName → Set<expressID>
+  byFamily: {},     // familyName → Set<expressID>
+};
+const BIMObjects = {}; // objId → référence vers BIMStore.byId[expressID] pour compatibilité UI
+const Groups     = {}; // classification dérivée → mesh[] (vue de présentation)
 const Families   = {}; // familyName  → expressID[]
 const Storeys    = {}; // storeyName  → expressID[]
 let modelID_current = null;
@@ -275,7 +314,29 @@ let wireframeMode   = false;
 let xrayMode        = false;
 let totalTris       = 0;
 let projectInfo     = {};
-let leftTab         = 'layers';
+let _unitFactors    = null;
+let leftTab         = 'ifcTypes';
+
+function addToSecondaryIndex(index, key, expressID) {
+  if (!key && key !== 0) return;
+  if (!index[key]) index[key] = new Set();
+  index[key].add(expressID);
+}
+
+function clearSecondaryIndex(index) {
+  for (const key in index) delete index[key];
+}
+
+function meshesFromExpressIDs(ids) {
+  return ids
+    .map(id => BIMStore.byId[id]?.mesh)
+    .filter(Boolean);
+}
+
+function getUnitFactor(measureType) {
+  if (!_unitFactors) return 1.0;
+  return _unitFactors[measureType] ?? 1.0;
+}
 
 // ── État avancé: Isolation, Recherche, Hiérarchie ─────────────────────────────
 let isolationActive = false;
@@ -284,14 +345,184 @@ const visibilityStateBeforeIsolation = {}; // Pour restaurer l'état
 let searchResults = [];
 let currentSearchIndex = 0;
 const spatialHierarchy = {}; // Structure hiérarchique IFC
+const _systemAssignments = {}; // expressID -> system names[]
+const _classificationAssignments = {}; // expressID -> classification entries[]
+const activeFilters = {
+  ifcType: '',
+  storey: '',
+  material: '',
+  system: '',
+};
+
+function iconSpan(iconClass, extraClass = '', ariaHidden = true) {
+  const hidden = ariaHidden ? ' aria-hidden="true"' : '';
+  const cls = `icon ${iconClass}${extraClass ? ` ${extraClass}` : ''}`;
+  return `<span class="${cls}"${hidden}></span>`;
+}
+
+function tabIcon(name) {
+  const icons = {
+    ifcTypes: iconSpan('icon-tab-ifc-types', 'icon-tab'),
+    categories: iconSpan('icon-tab-categories', 'icon-tab'),
+    materials: iconSpan('icon-tab-materials', 'icon-tab'),
+    systems: iconSpan('icon-tab-systems', 'icon-tab'),
+    families: iconSpan('icon-tab-families', 'icon-tab'),
+    storeys: iconSpan('icon-tab-storeys', 'icon-tab'),
+    hierarchy: iconSpan('icon-tab-hierarchy', 'icon-tab'),
+  };
+  return icons[name] || icons.categories;
+}
+
+function renderTabButton(id, key, title, count, showBadge = true) {
+  return `<button class="ltab ${leftTab===key ? 'active' : ''}" id="${id}" title="${title}" aria-label="${title}">${tabIcon(key)}${showBadge ? `<span class="tbadge">${count}</span>` : ''}</button>`;
+}
+
+function hasActiveFilters() {
+  return Object.values(activeFilters).some(Boolean);
+}
+
+function resetActiveFilters() {
+  activeFilters.ifcType = '';
+  activeFilters.storey = '';
+  activeFilters.material = '';
+  activeFilters.system = '';
+}
+
+function recordMatchesFilters(record) {
+  if (!record) return false;
+  if (activeFilters.ifcType && record.ifcType !== activeFilters.ifcType) return false;
+  if (activeFilters.storey && record.storey !== activeFilters.storey) return false;
+  if (activeFilters.material && !(record.materials || []).includes(activeFilters.material)) return false;
+  if (activeFilters.system && !(record.systems || []).includes(activeFilters.system)) return false;
+  return true;
+}
+
+function filterExpressIDs(ids) {
+  if (!hasActiveFilters()) return ids.slice();
+  return ids.filter(id => recordMatchesFilters(BIMStore.byId[id]));
+}
+
+function formatFilteredCount(filteredCount, totalCount, suffix = '') {
+  const base = filteredCount === totalCount ? `${totalCount}` : `${filteredCount}/${totalCount}`;
+  return suffix ? `${base} ${suffix}` : base;
+}
+
+function tabSupportsGroupActions(tabName) {
+  return ['ifcTypes', 'categories', 'materials', 'systems', 'families', 'storeys'].includes(tabName);
+}
+
+function tabSupportsFilters(tabName) {
+  return tabName !== 'hierarchy';
+}
+
+function tabContextHint(tabName) {
+  if (tabName === 'hierarchy') {
+    return 'Vue hiérarchique spatiale IFC (Projet > Site > Bâtiment > Niveau > Espace). Les actions de groupes et filtres ne s\'appliquent pas ici.';
+  }
+  return '';
+}
+
+function renderPanelControls(container, options = {}) {
+  const {
+    showGroupActions = false,
+    showFilters = true,
+    groupCount = 0,
+    contextHint = '',
+  } = options;
+
+  container.innerHTML = '';
+  const hasData = Object.keys(BIMStore.byId).length > 0;
+  if (!hasData) return;
+
+  if (showGroupActions) {
+    const actions = document.createElement('div');
+    actions.className = 'layer-controls-actions';
+
+    const btnCollapse = document.createElement('button');
+    btnCollapse.innerHTML = iconSpan('icon-collapse-all', 'icon-control');
+    btnCollapse.title = 'Réduire tous les groupes';
+    btnCollapse.setAttribute('aria-label', 'Réduire tous les groupes');
+    btnCollapse.disabled = groupCount === 0;
+    btnCollapse.addEventListener('click', () => {
+      document.getElementById('layer-list')?.querySelectorAll('.layer-group').forEach(grp => grp.classList.remove('open'));
+    });
+
+    const btnExpand = document.createElement('button');
+    btnExpand.innerHTML = iconSpan('icon-expand-all', 'icon-control');
+    btnExpand.title = 'Développer tous les groupes';
+    btnExpand.setAttribute('aria-label', 'Développer tous les groupes');
+    btnExpand.disabled = groupCount === 0;
+    btnExpand.addEventListener('click', () => {
+      document.getElementById('layer-list')?.querySelectorAll('.layer-group').forEach(grp => grp.classList.add('open'));
+    });
+
+    actions.appendChild(btnCollapse);
+    actions.appendChild(btnExpand);
+    container.appendChild(actions);
+  }
+
+  if (contextHint) {
+    const hint = document.createElement('div');
+    hint.className = 'layer-controls-note';
+    hint.textContent = contextHint;
+    container.appendChild(hint);
+  }
+
+  if (!showFilters) return;
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+
+  const selectDefs = [
+    { key: 'ifcType', label: 'Type IFC', options: Object.keys(BIMStore.byIfcType).sort() },
+    { key: 'storey', label: 'Niveau', options: Object.keys(BIMStore.byStorey).filter(k => k && k !== '—').sort() },
+    { key: 'material', label: 'Matériau', options: Object.keys(BIMStore.byMaterial).sort() },
+    { key: 'system', label: 'Système', options: Object.keys(BIMStore.bySystem).sort() },
+  ];
+
+  selectDefs.forEach(({ key, label, options }) => {
+    const wrap = document.createElement('label');
+    wrap.className = 'filter-field';
+    wrap.innerHTML = `<span>${label}</span>`;
+
+    const select = document.createElement('select');
+    select.className = 'filter-select';
+    select.setAttribute('aria-label', `Filtrer par ${label}`);
+    select.innerHTML = `<option value="">Tous</option>${options.map(option => `<option value="${option}">${option}</option>`).join('')}`;
+    select.value = activeFilters[key];
+    select.addEventListener('change', () => {
+      activeFilters[key] = select.value;
+      buildPanel();
+    });
+
+    wrap.appendChild(select);
+    filterBar.appendChild(wrap);
+  });
+
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'filter-reset-btn';
+  resetBtn.type = 'button';
+  resetBtn.textContent = 'Réinitialiser';
+  resetBtn.disabled = !hasActiveFilters();
+  resetBtn.addEventListener('click', () => {
+    resetActiveFilters();
+    buildPanel();
+  });
+  filterBar.appendChild(resetBtn);
+  container.appendChild(filterBar);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  CHARGEMENT IFC
 // ═════════════════════════════════════════════════════════════════════════════
+const IFC_UPLOAD_MAX_SIZE_MB = 100;
+const IFC_UPLOAD_MAX_SIZE_BYTES = IFC_UPLOAD_MAX_SIZE_MB * 1024 * 1024;
+
 async function loadIFCFile(input) {
   const file = input?.files?.[0];
   if (!file) return;
   await loadIFCFromFile(file);
+  if (input) input.value = '';
 }
 
 function isSupportedIFCFile(file) {
@@ -300,10 +531,57 @@ function isSupportedIFCFile(file) {
   return name.endsWith('.ifc') || name.endsWith('.ifczip');
 }
 
+function hasSupportedIFCMime(file) {
+  const name = file?.name?.toLowerCase() || '';
+  const type = (file?.type || '').toLowerCase();
+  if (!type) return true;
+
+  if (name.endsWith('.ifc')) {
+    return [
+      'application/octet-stream',
+      'application/x-step',
+      'model/ifc',
+      'text/plain',
+    ].includes(type);
+  }
+
+  if (name.endsWith('.ifczip')) {
+    return [
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/octet-stream',
+    ].includes(type);
+  }
+
+  return false;
+}
+
+function validateIFCUpload(file) {
+  if (!file) return { ok: false, reason: 'Aucun fichier sélectionné.' };
+  if (!isSupportedIFCFile(file)) {
+    return { ok: false, reason: 'Fichier non supporté (utilisez .ifc ou .ifczip).' };
+  }
+  if (file.size > IFC_UPLOAD_MAX_SIZE_BYTES) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    return {
+      ok: false,
+      reason: `Fichier trop volumineux (${sizeMb} Mo). Limite: ${IFC_UPLOAD_MAX_SIZE_MB} Mo.`,
+    };
+  }
+  if (!hasSupportedIFCMime(file)) {
+    return {
+      ok: false,
+      reason: 'Type MIME incohérent avec l’extension du fichier IFC.',
+    };
+  }
+  return { ok: true };
+}
+
 async function loadIFCFromFile(file) {
-  if (!file || !isSupportedIFCFile(file)) {
-    setLoadingMsg('⚠ Fichier non supporté (utilisez .ifc ou .ifczip)');
+  const validation = validateIFCUpload(file);
+  if (!validation.ok) {
     document.getElementById('loading').style.display = 'flex';
+    setLoadingMsg(`⚠ ${validation.reason}`);
     setTimeout(() => document.getElementById('loading').style.display = 'none', 2200);
     return;
   }
@@ -331,15 +609,24 @@ async function loadIFCFromFile(file) {
     for (const k in Groups)     delete Groups[k];
     for (const k in Families)   delete Families[k];
     for (const k in Storeys)    delete Storeys[k];
+    clearSecondaryIndex(BIMStore.byId);
+    clearSecondaryIndex(BIMStore.byIfcType);
+    clearSecondaryIndex(BIMStore.byCategory);
+    clearSecondaryIndex(BIMStore.byStorey);
+    clearSecondaryIndex(BIMStore.bySystem);
+    clearSecondaryIndex(BIMStore.byMaterial);
+    clearSecondaryIndex(BIMStore.byFamily);
     for (const k in _storeyIndex) delete _storeyIndex[k];
+    for (const k in _systemAssignments) delete _systemAssignments[k];
+    for (const k in _classificationAssignments) delete _classificationAssignments[k];
     _storeyIndexBuilt = false;
-    // Réinitialiser les calques dynamiques ajoutés
+    // Réinitialiser les catégories dynamiques ajoutées
     Object.keys(LAYER_DEFS).forEach(k => {
       if (!['Gros-Œuvre','Structure','Fenêtres','Portes','MEP — CVC','MEP — Plomberie','MEP — Électricité','Espaces','Mobilier','Finitions'].includes(k))
         delete LAYER_DEFS[k];
     });
     _extraColorIdx = 0;
-    selectedId = null; totalTris = 0; projectInfo = {};
+    selectedId = null; totalTris = 0; projectInfo = {}; _unitFactors = null;
     modelMesh_current = null;
     showPropPanel(null);
   }
@@ -356,17 +643,33 @@ async function loadIFCFromFile(file) {
     modelID_current = model.modelID;
     ifcModelLoaded  = true;
     modelMesh_current = model.mesh;
+
+    if (typeof ifcLoader.ifcManager.parser?.setupOptionalCategories === 'function') {
+      try {
+        await ifcLoader.ifcManager.parser.setupOptionalCategories({ [GEOM_TYPES.IFCSPACE]: true });
+      } catch (e) {
+        console.warn('[BIM] setupOptionalCategories warning (non-fatal):', e.message);
+      }
+    }
+
     // Le mesh racine du modèle est ajouté à la scène — il contient toute la géo
     scene.add(model.mesh);
 
     setLoadingMsg('Informations projet…');
     await readProjectInfo(model.modelID);
+  await loadUnitContext(model.modelID);
 
     setLoadingMsg('Arbre spatial (niveaux)…');
     await readSpatialStructure(model.modelID);
 
     setLoadingMsg('Index spatial (niveaux)…');
     await buildStoreyIndex(model.modelID);
+
+    setLoadingMsg('Index systèmes BIM…');
+    await loadSystemAssignments(model.modelID);
+
+    setLoadingMsg('Index classifications BIM…');
+    await loadClassificationAssignments(model.modelID);
 
     setLoadingMsg('Extraction des éléments…');
     await extractElements(model.modelID, model.mesh, setLoadingMsg);
@@ -375,8 +678,8 @@ async function loadIFCFromFile(file) {
       model.mesh.visible = false;
     }
 
-    setLoadingMsg('Construction des calques…');
-    leftTab = 'layers';
+    setLoadingMsg('Construction des index BIM…');
+    leftTab = 'ifcTypes';
     buildPanel();
     updateStats();
     fitCameraToModel();
@@ -469,6 +772,99 @@ async function readProjectInfo(mid) {
   } catch {}
 }
 
+async function loadUnitContext(mid) {
+  _unitFactors = { length: 1.0, area: 1.0, volume: 1.0 };
+  try {
+    const mgr  = ifcLoader.ifcManager;
+    const pids = await mgr.getAllItemsOfType(mid, META_TYPES.IFCPROJECT, false);
+    if (!pids?.length) return;
+    const proj = await mgr.getItemProperties(mid, pids[0], true);
+    const units = proj?.UnitsInContext?.Units || proj?.UnitsInContext?.value || [];
+    for (const u of units) {
+      const name = strVal(u?.Name || u?.name).toUpperCase();
+      const type = strVal(u?.UnitType || u?.unitType).toUpperCase();
+      if (!name || !type) continue;
+      if (name === 'FOOT' || name === 'FEET') {
+        if (type.includes('LENGTH')) _unitFactors.length = 0.3048;
+        if (type.includes('AREA')) _unitFactors.area = 0.3048 ** 2;
+        if (type.includes('VOLUME')) _unitFactors.volume = 0.3048 ** 3;
+      }
+      if (name === 'INCH') {
+        if (type.includes('LENGTH')) _unitFactors.length = 0.0254;
+        if (type.includes('AREA')) _unitFactors.area = 0.0254 ** 2;
+        if (type.includes('VOLUME')) _unitFactors.volume = 0.0254 ** 3;
+      }
+    }
+  } catch(e) {
+    console.warn('[BIM] loadUnitContext:', e.message);
+  }
+}
+
+async function loadSystemAssignments(mid) {
+  try {
+    const mgr = ifcLoader.ifcManager;
+    const rels = await mgr.getAllItemsOfType(mid, META_TYPES.IFCRELASSIGNSTOGROUP, false);
+    for (const relID of (rels || [])) {
+      try {
+        const rel = await mgr.getItemProperties(mid, relID, false);
+        const groupRef = rel?.RelatingGroup;
+        const groupID = groupRef?.value ?? groupRef;
+        if (!groupID) continue;
+
+        const group = await mgr.getItemProperties(mid, groupID, false);
+        const groupType = ifcTypeName(group?.type);
+        if (!/SYSTEM/.test(groupType)) continue;
+
+        const systemName = strVal(group?.Name) || strVal(group?.LongName) || `${groupType} #${groupID}`;
+        const related = rel?.RelatedObjects || [];
+        for (const ref of related) {
+          const eid = ref?.value ?? ref;
+          if (typeof eid !== 'number') continue;
+          if (!_systemAssignments[eid]) _systemAssignments[eid] = [];
+          if (!_systemAssignments[eid].includes(systemName)) _systemAssignments[eid].push(systemName);
+        }
+      } catch {}
+    }
+  } catch(e) {
+    console.warn('[BIM] loadSystemAssignments:', e.message);
+  }
+}
+
+async function loadClassificationAssignments(mid) {
+  try {
+    const mgr = ifcLoader.ifcManager;
+    const rels = await mgr.getAllItemsOfType(mid, META_TYPES.IFCRELASSOCIATESCLASSIFICATION, false);
+    for (const relID of (rels || [])) {
+      try {
+        const rel = await mgr.getItemProperties(mid, relID, false);
+        const relClassRef = rel?.RelatingClassification;
+        const classRefID = relClassRef?.value ?? relClassRef;
+        if (!classRefID) continue;
+
+        const classRef = await mgr.getItemProperties(mid, classRefID, true);
+        const refName = strVal(classRef?.Name) || strVal(classRef?.Identification) || strVal(classRef?.ItemReference) || `#${classRefID}`;
+        const source = classRef?.ReferencedSource;
+        const srcObj = source?.value ? await mgr.getItemProperties(mid, source.value, false) : source;
+        const sourceName = strVal(srcObj?.Name) || strVal(srcObj?.Source) || strVal(srcObj?.Edition) || 'Classification';
+        const identifier = strVal(classRef?.Identification) || strVal(classRef?.ItemReference) || refName;
+
+        const related = rel?.RelatedObjects || [];
+        for (const ref of related) {
+          const eid = ref?.value ?? ref;
+          if (typeof eid !== 'number') continue;
+          if (!_classificationAssignments[eid]) _classificationAssignments[eid] = [];
+          const item = { source: sourceName, identifier, name: refName };
+          const key = `${item.source}|${item.identifier}|${item.name}`;
+          const exists = _classificationAssignments[eid].some(v => `${v.source}|${v.identifier}|${v.name}` === key);
+          if (!exists) _classificationAssignments[eid].push(item);
+        }
+      } catch {}
+    }
+  } catch (e) {
+    console.warn('[BIM] loadClassificationAssignments:', e.message);
+  }
+}
+
 // ── Lecture arbre spatial → Storeys ──────────────────────────────────────────
 async function readSpatialStructure(mid) {
   const mgr = ifcLoader.ifcManager;
@@ -518,128 +914,191 @@ async function extractElements(mid, modelMesh, progress) {
     expressIDs = [...new Set(expressIDs)];
   }
 
+  const BATCH_SIZE = 50;
   let done = 0;
-  for (const eid of expressIDs) {
-    const objId = `ifc_${eid}`;
-    if (BIMObjects[objId]) {
-      done++;
-      if (done % 100 === 0 || done === expressIDs.length) progress(`Extraction… ${done}/${expressIDs.length} éléments`);
-      continue;
-    }
 
+  for (let i = 0; i < expressIDs.length; i += BATCH_SIZE) {
+    const chunk = expressIDs.slice(i, i + BATCH_SIZE);
+    await Promise.all(chunk.map(eid => extractOneElement(mid, eid, progress, expressIDs.length)));
+    done += chunk.length;
+    progress(`Extraction… ${Math.min(done, expressIDs.length)}/${expressIDs.length} éléments`);
+  }
+}
+
+async function extractOneElement(mid, eid, progressCb, total) {
+  const mgr = ifcLoader.ifcManager;
+  const objId = `ifc_${eid}`;
+  if (BIMObjects[objId]) return;
+
+  try {
+    const props = await mgr.getItemProperties(mid, eid, false);
+    let typeNum = null;
     try {
-      const props = await mgr.getItemProperties(mid, eid, false);
-      let typeNum = null;
-      try {
-        if (typeof mgr.getIfcType === 'function') typeNum = mgr.getIfcType(mid, eid);
-      } catch {}
-      if (typeof typeNum !== 'number') typeNum = props?.type;
+      if (typeof mgr.getIfcType === 'function') typeNum = mgr.getIfcType(mid, eid);
+    } catch {}
+    if (typeof typeNum !== 'number') typeNum = props?.type;
 
-      const typeLabel = ifcTypeName(typeNum);
-      const name  = strVal(props?.Name) || strVal(props?.LongName)
-                 || strVal(props?.Description) || `${typeLabel} #${eid}`;
-      const objectType = strVal(props?.ObjectType) || strVal(props?.Tag) || '';
-      const tag        = strVal(props?.Tag) || '';
+    const typeLabel = ifcTypeName(typeNum);
+    const name  = strVal(props?.Name) || strVal(props?.LongName)
+               || strVal(props?.Description) || `${typeLabel} #${eid}`;
+    const objectType = strVal(props?.ObjectType) || strVal(props?.Tag) || '';
+    const tag = strVal(props?.Tag) || '';
+    const predefinedType = strVal(props?.PredefinedType) || '';
 
-      let familyName  = objectType;
-      let familyProps = {};
-      try {
-        const typeRels = await mgr.getTypeProperties(mid, eid, false);
-        if (typeRels?.length) {
-          const tr  = typeRels[0];
-          const fn  = strVal(tr?.Name) || strVal(tr?.LongName);
-          if (fn) familyName = fn;
-          if (tr?.Description?.value) familyProps['Desc. famille'] = tr.Description.value;
-          if (tr?.ApplicableOccurrence?.value) familyProps['Occurrence'] = tr.ApplicableOccurrence.value;
-        }
-      } catch {}
-
-      const layerName = resolveLayerName(typeNum, name, objectType, familyName);
-      if (!Groups[layerName]) Groups[layerName] = [];
-
-      const psets = {};
-      try {
-        const psData = await mgr.getPropertySets(mid, eid, true);
-        for (const ps of (psData || [])) {
-          const psName = strVal(ps?.Name) || 'Pset';
-          for (const prop of (ps?.HasProperties || [])) {
-            const k = strVal(prop?.Name);
-            const v = prop?.NominalValue?.value ?? prop?.Value?.value;
-            if (k && v != null) psets[`${psName}::${k}`] = String(v);
-          }
-          for (const qty of (ps?.Quantities || [])) {
-            const k = strVal(qty?.Name);
-            const v = qty?.LengthValue?.value  ?? qty?.AreaValue?.value
-                   ?? qty?.VolumeValue?.value  ?? qty?.WeightValue?.value
-                   ?? qty?.CountValue?.value   ?? qty?.TimeValue?.value;
-            if (k && v != null) psets[`${psName}::${k}`] = fmtQty(k, v);
-          }
-        }
-      } catch {}
-
-      let materiaux = '';
-      try {
-        const matData = await mgr.getMaterialsProperties(mid, eid, true);
-        const names = (matData || [])
-          .map(m => strVal(m?.Name) || strVal(m?.Category))
-          .filter(Boolean);
-        if (names.length) materiaux = names.join(', ');
-      } catch {}
-
-      const _sn = findStorey(mid, eid);
-      const storeyName = _sn || '—';
-
-      if (familyName) {
-        if (!Families[familyName]) Families[familyName] = [];
-        Families[familyName].push(eid);
+    let familyName = objectType;
+    let familyProps = {};
+    try {
+      const typeRels = await mgr.getTypeProperties(mid, eid, false);
+      if (typeRels?.length) {
+        const tr = typeRels[0];
+        const fn = strVal(tr?.Name) || strVal(tr?.LongName);
+        if (fn) familyName = fn;
+        if (tr?.Description?.value) familyProps['Desc. famille'] = tr.Description.value;
+        if (tr?.ApplicableOccurrence?.value) familyProps['Occurrence'] = tr.ApplicableOccurrence.value;
       }
-      if (storeyName !== '—') {
-        if (!Storeys[storeyName]) Storeys[storeyName] = [];
-        Storeys[storeyName].push(eid);
-      }
-
-      const subset = mgr.createSubset({
-        modelID: mid, ids: [eid], scene,
-        removePrevious: false, customID: objId,
-        material: layerMat(layerName),
-      });
-      if (!subset) {
-        done++;
-        if (done % 100 === 0 || done === expressIDs.length) progress(`Extraction… ${done}/${expressIDs.length} éléments`);
-        continue;
-      }
-      subset.userData = { id: objId, name, layer: layerName, expressID: eid };
-
-      const finalProps = {
-        'Type IFC':   typeLabel,
-        'Nom':        name,
-        ...(objectType && objectType !== name ? { 'Type objet': objectType } : {}),
-        ...(tag && tag !== name && tag !== objectType ? { 'Repère': tag } : {}),
-        ...(familyName && familyName !== name && familyName !== objectType ? { 'Famille / Type': familyName } : {}),
-        ...(materiaux ? { 'Matériaux': materiaux } : {}),
-        'Niveau':     storeyName,
-        'ExpressID':  eid,
-        ...familyProps,
-        ...psets,
-      };
-
-      BIMObjects[objId] = {
-        mesh: subset, name,
-        type: layerName,
-        props: finalProps,
-        expressID: eid, modelID: mid,
-        familyType: familyName,
-        storey: storeyName,
-      };
-      Groups[layerName].push(subset);
-      const g = subset.geometry;
-      if (g?.index) totalTris += g.index.count / 3;
-
     } catch {}
 
-    done++;
-    if (done % 100 === 0 || done === expressIDs.length) progress(`Extraction… ${done}/${expressIDs.length} éléments`);
-  }
+    const categoryName = resolveLayerName(typeNum, name, objectType, familyName, predefinedType);
+    if (!Groups[categoryName]) Groups[categoryName] = [];
+
+    const psets = {};
+    const propertySets = {};
+    const quantitySets = {};
+    try {
+      const psData = await mgr.getPropertySets(mid, eid, true);
+      for (const ps of (psData || [])) {
+        const psName = strVal(ps?.Name) || 'Pset';
+        if (!propertySets[psName]) propertySets[psName] = {};
+        if (!quantitySets[psName]) quantitySets[psName] = {};
+        for (const prop of (ps?.HasProperties || [])) {
+          const k = strVal(prop?.Name);
+          const v = prop?.NominalValue?.value ?? prop?.Value?.value;
+          if (k && v != null) {
+            const sv = String(v);
+            propertySets[psName][k] = sv;
+            psets[`${psName}::${k}`] = sv;
+          }
+        }
+        for (const qty of (ps?.Quantities || [])) {
+          const k = strVal(qty?.Name);
+          const v = qty?.LengthValue?.value ?? qty?.AreaValue?.value
+                 ?? qty?.VolumeValue?.value ?? qty?.WeightValue?.value
+                 ?? qty?.CountValue?.value ?? qty?.TimeValue?.value;
+          if (k && v != null) {
+            const detail = formatQuantityDetail(k, v);
+            quantitySets[psName][k] = detail;
+            psets[`${psName}::${k}`] = detail.display;
+          }
+        }
+        if (!Object.keys(propertySets[psName]).length) delete propertySets[psName];
+        if (!Object.keys(quantitySets[psName]).length) delete quantitySets[psName];
+      }
+    } catch {}
+
+    let materialNames = [];
+    let materiaux = '';
+    try {
+      const matData = await mgr.getMaterialsProperties(mid, eid, true);
+      materialNames = (matData || [])
+        .map(m => strVal(m?.Name) || strVal(m?.Category))
+        .filter(Boolean);
+      if (materialNames.length) materiaux = materialNames.join(', ');
+    } catch {}
+
+    const _sn = findStorey(mid, eid);
+    const storeyName = _sn || '—';
+    const systemNames = _systemAssignments[eid] || [];
+    const classifications = _classificationAssignments[eid] || [];
+    const classificationText = classifications
+      .map(c => `${c.source}: ${c.identifier}${c.name && c.name !== c.identifier ? ` — ${c.name}` : ''}`)
+      .join(' | ');
+
+    const subset = mgr.createSubset({
+      modelID: mid, ids: [eid], scene,
+      removePrevious: false, customID: objId,
+      material: layerMat(categoryName),
+    });
+    if (!subset) return;
+
+    subset.userData = { id: objId, name, category: categoryName, ifcType: typeLabel, expressID: eid };
+
+    const finalProps = {
+      'Type IFC':   typeLabel,
+      'Classification': categoryName,
+      'Nom':        name,
+      ...(objectType && objectType !== name ? { 'Type objet': objectType } : {}),
+      ...(tag && tag !== name && tag !== objectType ? { 'Repère': tag } : {}),
+      ...(familyName && familyName !== name && familyName !== objectType ? { 'Famille / Type': familyName } : {}),
+      ...(materiaux ? { 'Matériaux': materiaux } : {}),
+      ...(classificationText ? { 'Classifications': classificationText } : {}),
+      'Niveau':     storeyName,
+      'ExpressID':  eid,
+      ...familyProps,
+      ...psets,
+    };
+
+    const normalizedProps = {
+      identity: {
+        'Type IFC': typeLabel,
+        'ExpressID': eid,
+      },
+      baseAttributes: {
+        'Nom': name,
+        ...(objectType && objectType !== name ? { 'Type objet': objectType } : {}),
+        ...(tag && tag !== name && tag !== objectType ? { 'Repère': tag } : {}),
+        ...(predefinedType ? { 'Type prédéfini': predefinedType } : {}),
+        'Classification': categoryName,
+        'Niveau': storeyName,
+      },
+      typeProperties: {
+        ...(familyName && familyName !== name && familyName !== objectType ? { 'Famille / Type': familyName } : {}),
+        ...familyProps,
+      },
+      propertySets,
+      quantities: quantitySets,
+      materials: materialNames,
+      classifications,
+      metadata: {
+        sourceLengthUnit: sourceUnitForMeasure('length'),
+        sourceAreaUnit: sourceUnitForMeasure('area'),
+        sourceVolumeUnit: sourceUnitForMeasure('volume'),
+      },
+    };
+
+    const record = {
+      mesh: subset, name,
+      type: categoryName,
+      classification: categoryName,
+      ifcType: typeLabel,
+      props: finalProps,
+      expressID: eid, modelID: mid,
+      familyType: familyName,
+      materials: materialNames,
+      systems: systemNames,
+      predefinedType,
+      storey: storeyName,
+      ifcProps: normalizedProps,
+    };
+    BIMStore.byId[eid] = record;
+    BIMObjects[objId] = record;
+    if (familyName) {
+      if (!Families[familyName]) Families[familyName] = [];
+      Families[familyName].push(eid);
+    }
+    if (storeyName !== '—') {
+      if (!Storeys[storeyName]) Storeys[storeyName] = [];
+      Storeys[storeyName].push(eid);
+    }
+    addToSecondaryIndex(BIMStore.byIfcType, typeLabel, eid);
+    addToSecondaryIndex(BIMStore.byCategory, categoryName, eid);
+    addToSecondaryIndex(BIMStore.byStorey, storeyName, eid);
+    addToSecondaryIndex(BIMStore.byFamily, familyName || '—', eid);
+    systemNames.forEach(systemName => addToSecondaryIndex(BIMStore.bySystem, systemName, eid));
+    materialNames.forEach(materialName => addToSecondaryIndex(BIMStore.byMaterial, materialName, eid));
+    Groups[categoryName].push(subset);
+    const g = subset.geometry;
+    if (g?.index) totalTris += g.index.count / 3;
+  } catch {}
 }
 
 // ── Index storey : construit une seule fois, O(1) ensuite ────────────────────
@@ -682,84 +1141,242 @@ function strVal(val) {
   if (val?.value !== undefined) return String(val.value).trim();
   return '';
 }
-function fmtQty(key, val) {
+function sourceUnitForMeasure(measureType) {
+  const factor = getUnitFactor(measureType);
+  if (measureType === 'length') {
+    if (Math.abs(factor - 1.0) < 1e-9) return 'm';
+    if (Math.abs(factor - 0.3048) < 1e-9) return 'ft';
+    if (Math.abs(factor - 0.0254) < 1e-9) return 'in';
+    return `u(${factor.toFixed(6)})`;
+  }
+  if (measureType === 'area') {
+    if (Math.abs(factor - 1.0) < 1e-9) return 'm²';
+    if (Math.abs(factor - (0.3048 ** 2)) < 1e-9) return 'ft²';
+    if (Math.abs(factor - (0.0254 ** 2)) < 1e-9) return 'in²';
+    return `u²(${factor.toFixed(6)})`;
+  }
+  if (measureType === 'volume') {
+    if (Math.abs(factor - 1.0) < 1e-9) return 'm³';
+    if (Math.abs(factor - (0.3048 ** 3)) < 1e-9) return 'ft³';
+    if (Math.abs(factor - (0.0254 ** 3)) < 1e-9) return 'in³';
+    return `u³(${factor.toFixed(6)})`;
+  }
+  return 'u';
+}
+function formatQuantityDetail(key, val) {
   const k = key.toLowerCase();
-  if (k.includes('area'))   return `${(+val).toFixed(2)} m²`;
-  if (k.includes('volume')) return `${(+val).toFixed(3)} m³`;
-  if (k.includes('length') || k.includes('height') || k.includes('width') || k.includes('depth') || k.includes('perimeter'))
-                             return `${(+val).toFixed(3)} m`;
-  if (k.includes('weight')) return `${(+val).toFixed(1)} kg`;
-  if (k.includes('count'))  return String(Math.round(+val));
-  return String(Math.round(+val * 1000) / 1000);
+  if (k.includes('area')) {
+    const converted = (+val) * getUnitFactor('area');
+    return { value: converted, sourceUnit: sourceUnitForMeasure('area'), targetUnit: 'm²', display: `${converted.toFixed(2)} m²`, rawValue: +val };
+  }
+  if (k.includes('volume')) {
+    const converted = (+val) * getUnitFactor('volume');
+    return { value: converted, sourceUnit: sourceUnitForMeasure('volume'), targetUnit: 'm³', display: `${converted.toFixed(3)} m³`, rawValue: +val };
+  }
+  if (k.includes('length') || k.includes('height') || k.includes('width') || k.includes('depth') || k.includes('perimeter')) {
+    const converted = (+val) * getUnitFactor('length');
+    return { value: converted, sourceUnit: sourceUnitForMeasure('length'), targetUnit: 'm', display: `${converted.toFixed(3)} m`, rawValue: +val };
+  }
+  if (k.includes('weight')) {
+    const converted = +val;
+    return { value: converted, sourceUnit: 'kg', targetUnit: 'kg', display: `${converted.toFixed(1)} kg`, rawValue: +val };
+  }
+  if (k.includes('count')) {
+    const converted = Math.round(+val);
+    return { value: converted, sourceUnit: 'count', targetUnit: 'count', display: String(converted), rawValue: +val };
+  }
+  const converted = Math.round(+val * 1000) / 1000;
+  return { value: converted, sourceUnit: 'u', targetUnit: 'u', display: String(converted), rawValue: +val };
+}
+function fmtQty(key, val) {
+  return formatQuantityDetail(key, val).display;
 }
 function ifcTypeName(n) {
   if (typeof n !== 'number') return 'IFC_UNKNOWN';
   if (IFC_TYPE_NAME_BY_CODE[n]) return IFC_TYPE_NAME_BY_CODE[n];
   for (const [k, v] of Object.entries(GEOM_TYPES)) if (v === n) return k;
+  for (const [k, v] of Object.entries(TYPE_TYPES)) if (v === n) return k;
   for (const [k, v] of Object.entries(META_TYPES)) if (v === n) return k;
   return `IFC_${n}`;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  PANNEAU GAUCHE — Calques / Familles / Niveaux
+//  PANNEAU GAUCHE — Types IFC / Classification / Familles / Niveaux
 // ═════════════════════════════════════════════════════════════════════════════
 function buildPanel() {
   // Onglets
   const tabs = document.getElementById('left-tabs');
   if (tabs) {
+    const nt = Object.keys(BIMStore.byIfcType).length;
+    const nc = Object.keys(Groups).length;
+    const nm = Object.keys(BIMStore.byMaterial).length;
+    const ny = Object.keys(BIMStore.bySystem).length;
     const nf = Object.keys(Families).length;
     const ns = Object.keys(Storeys).filter(k => !k.startsWith('_')).length;
     const nh = spatialHierarchy.sites ? spatialHierarchy.sites.length : 0;
     tabs.innerHTML = `
-      <button class="ltab ${leftTab==='layers'  ?'active':''}"  id="tab-layers">Calques</button>
-      <button class="ltab ${leftTab==='families'?'active':''}" id="tab-families">Familles <span class="tbadge">${nf}</span></button>
-      <button class="ltab ${leftTab==='storeys' ?'active':''}"  id="tab-storeys">Niveaux <span class="tbadge">${ns}</span></button>
-      <button class="ltab ${leftTab==='hierarchy'?'active':''}" id="tab-hierarchy">Hiérarchie</button>`;
-    document.getElementById('tab-layers')    ?.addEventListener('click', () => { leftTab='layers';    buildPanel(); });
+      ${renderTabButton('tab-ifc-types', 'ifcTypes', 'Types IFC', nt)}
+      ${renderTabButton('tab-categories', 'categories', 'Classification', nc)}
+      ${renderTabButton('tab-materials', 'materials', 'Matériaux', nm)}
+      ${renderTabButton('tab-systems', 'systems', 'Systèmes', ny)}
+      ${renderTabButton('tab-families', 'families', 'Familles', nf)}
+      ${renderTabButton('tab-storeys', 'storeys', 'Niveaux', ns)}
+      ${renderTabButton('tab-hierarchy', 'hierarchy', 'Hiérarchie', nh, true)}`;
+    document.getElementById('tab-ifc-types') ?.addEventListener('click', () => { leftTab='ifcTypes';  buildPanel(); });
+    document.getElementById('tab-categories')?.addEventListener('click', () => { leftTab='categories'; buildPanel(); });
+    document.getElementById('tab-materials') ?.addEventListener('click', () => { leftTab='materials';  buildPanel(); });
+    document.getElementById('tab-systems')   ?.addEventListener('click', () => { leftTab='systems';    buildPanel(); });
     document.getElementById('tab-families')  ?.addEventListener('click', () => { leftTab='families';  buildPanel(); });
     document.getElementById('tab-storeys')   ?.addEventListener('click', () => { leftTab='storeys';   buildPanel(); });
     document.getElementById('tab-hierarchy') ?.addEventListener('click', () => { leftTab='hierarchy'; buildPanel(); });
   }
 
   const list = document.getElementById('layer-list');
+  const layerControls = document.getElementById('layer-controls');
   list.innerHTML = '';
-  // Add expand/collapse all buttons for layers tab
-  if (leftTab === 'layers') {
-    const controls = document.createElement('div');
-    controls.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;justify-content:flex-end;';
-    const btnCollapse = document.createElement('button');
-    btnCollapse.textContent = '− Réduire tout';
-    btnCollapse.title = 'Réduire tous les groupes';
-    btnCollapse.style.cssText = 'padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);cursor:pointer;';
-    btnCollapse.addEventListener('click', () => {
-      list.querySelectorAll('.layer-group').forEach(grp => grp.classList.remove('open'));
-    });
-    const btnExpand = document.createElement('button');
-    btnExpand.textContent = '+ Développer tout';
-    btnExpand.title = 'Développer tous les groupes';
-    btnExpand.style.cssText = 'padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);cursor:pointer;';
-    btnExpand.addEventListener('click', () => {
-      list.querySelectorAll('.layer-group').forEach(grp => grp.classList.add('open'));
-    });
-    controls.appendChild(btnCollapse);
-    controls.appendChild(btnExpand);
-    list.appendChild(controls);
-    renderLayersTab(list);
-  }
+  if (leftTab === 'ifcTypes')   renderIfcTypesTab(list);
+  if (leftTab === 'categories') renderCategoriesTab(list);
+  if (leftTab === 'materials')  renderMaterialsTab(list);
+  if (leftTab === 'systems')    renderSystemsTab(list);
   if (leftTab === 'families')  renderFamiliesTab(list);
   if (leftTab === 'storeys')   renderStoreysTab(list);
   if (leftTab === 'hierarchy') renderSpatialHierarchyTab(list);
+
+  const groupCount = list.querySelectorAll('.layer-group').length;
+  renderPanelControls(layerControls, {
+    showGroupActions: tabSupportsGroupActions(leftTab),
+    showFilters: tabSupportsFilters(leftTab),
+    groupCount,
+    contextHint: tabContextHint(leftTab),
+  });
 }
 
-// ── Onglet Calques ────────────────────────────────────────────────────────────
-function renderLayersTab(list) {
+function renderIndexedSetTab(list, index, emptyHtml, getTitle, getAccent, getFocusTitle) {
+  const names = Object.keys(index).sort((a, b) => index[b].size - index[a].size || a.localeCompare(b));
+  if (!names.length) {
+    list.innerHTML = emptyHtml;
+    return;
+  }
+
+  let rendered = 0;
+
+  names.forEach(name => {
+    const ids = [...index[name]];
+    const filteredIds = filterExpressIDs(ids);
+    const meshes = meshesFromExpressIDs(filteredIds);
+    if (!meshes.length) return;
+    const sample = BIMStore.byId[ids[0]];
+    const accent = getAccent(sample, name);
+    rendered++;
+
+    const grp = document.createElement('div');
+    grp.className = 'layer-group open';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'layer-group-header';
+    hdr.innerHTML = `
+      <div class="layer-dot" style="background:${accent}"></div>
+      <span title="${name}">${getTitle(name)}</span>
+      <span style="font-size:10px;color:#6b7280;margin-left:4px">${formatFilteredCount(filteredIds.length, ids.length)}</span>
+      <button class="focus-btn" style="display:flex;margin-left:auto" title="${getFocusTitle(name)}">
+        ${iconSpan('icon-focus', 'icon-focus')}
+      </button>
+      <span class="layer-arrow">▶</span>`;
+    hdr.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(filteredIds); });
+    hdr.addEventListener('click', () => grp.classList.toggle('open'));
+    grp.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'layer-items';
+    addMeshRows(body, meshes, 25);
+    grp.appendChild(body);
+    list.appendChild(grp);
+  });
+
+  if (!rendered) list.innerHTML = `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun résultat pour les filtres actifs</div>`;
+}
+
+function renderMaterialsTab(list) {
+  renderIndexedSetTab(
+    list,
+    BIMStore.byMaterial,
+    `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun matériau IFC détecté</div>`,
+    name => name,
+    () => '#c8a06a',
+    name => `Centrer sur le matériau ${name}`
+  );
+}
+
+function renderSystemsTab(list) {
+  renderIndexedSetTab(
+    list,
+    BIMStore.bySystem,
+    `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun système IFC détecté<br><span style="font-size:9px;color:#374151">Vérifiez la présence de IfcRelAssignsToGroup / IfcSystem</span></div>`,
+    name => name,
+    () => '#42a5f5',
+    name => `Centrer sur le système ${name}`
+  );
+}
+
+// ── Onglet Types IFC ──────────────────────────────────────────────────────────
+function renderIfcTypesTab(list) {
+  const names = Object.keys(BIMStore.byIfcType).sort();
+  if (!names.length) { showWelcome(list); return; }
+
+  let rendered = 0;
+
+  names.forEach(ifcType => {
+    const ids = [...BIMStore.byIfcType[ifcType]];
+    const filteredIds = filterExpressIDs(ids);
+    const meshes = meshesFromExpressIDs(filteredIds);
+    if (!meshes.length) return;
+    const sample = BIMStore.byId[ids[0]];
+    const def = layerDef(sample?.classification || 'Objets génériques');
+    rendered++;
+
+    const grp = document.createElement('div');
+    grp.className = 'layer-group open';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'layer-group-header';
+    hdr.innerHTML = `
+      <div class="layer-dot" style="background:#${def.color.toString(16).padStart(6,'0')}"></div>
+      <span title="${ifcType}">${ifcType}</span>
+      <span style="font-size:10px;color:#6b7280;margin-left:4px">${formatFilteredCount(filteredIds.length, ids.length)}</span>
+      <button class="focus-btn" style="display:flex;margin-left:auto" title="Centrer sur ce type IFC">
+        ${iconSpan('icon-focus', 'icon-focus')}
+      </button>
+      <span class="layer-arrow">▶</span>`;
+    hdr.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(filteredIds); });
+    hdr.addEventListener('click', () => grp.classList.toggle('open'));
+    grp.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'layer-items';
+    addMeshRows(body, meshes, 25);
+    grp.appendChild(body);
+    list.appendChild(grp);
+  });
+
+  if (!rendered) list.innerHTML = `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun résultat pour les filtres actifs</div>`;
+}
+
+// ── Onglet Classification dérivée ─────────────────────────────────────────────
+function renderCategoriesTab(list) {
   const names = Object.keys(Groups).sort();
   if (!names.length) { showWelcome(list); return; }
 
+  let rendered = 0;
+
   names.forEach(name => {
     const items = Groups[name];
+    const allIds = items.map(mesh => mesh?.userData?.expressID).filter(id => typeof id === 'number');
+    const filteredIds = filterExpressIDs(allIds);
+    const filteredMeshes = meshesFromExpressIDs(filteredIds);
+    if (!filteredMeshes.length) return;
     const def   = layerDef(name);
     const hex   = '#' + def.color.toString(16).padStart(6,'0');
+    rendered++;
 
     const grp = document.createElement('div');
     grp.className = 'layer-group open';
@@ -770,12 +1387,12 @@ function renderLayersTab(list) {
     // Insert color picker button directly in action span
     hdr.innerHTML += `
       <span>${def.icon} ${name}</span>
-      <span style="font-size:10px;color:#6b7280;margin-left:4px">${items.length}</span>
+      <span style="font-size:10px;color:#6b7280;margin-left:4px">${formatFilteredCount(filteredIds.length, items.length)}</span>
       <span style="margin-left:auto;display:flex;gap:4px;align-items:center">
-        <button class="layer-color-btn" title="Changer la couleur du calque" style="background:${hex}"></button>
+        <button class="layer-color-btn" title="Changer la couleur de la classification" style="background:${hex}"></button>
         <span class="toggle-eye">👁</span>
-        <button class="focus-btn" style="display:flex" title="Centrer sur le calque">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M3 12h2M19 12h2M12 3v2M12 19v2"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>
+        <button class="focus-btn" style="display:flex" title="Centrer sur la classification">
+          ${iconSpan('icon-focus', 'icon-focus')}
         </button>
       </span>
       <span class="layer-arrow">▶</span>`;
@@ -808,10 +1425,10 @@ function renderLayersTab(list) {
       e.stopPropagation();
       const newColor = colorInput.value;
       colorBtn.style.background = newColor;
-      // Update layer color in LAYER_DEFS
+      // Update derived classification color in LAYER_DEFS
       const rgb = parseInt(newColor.replace('#',''), 16);
       LAYER_DEFS[name].color = rgb;
-      // Update color for all objects in layer
+      // Update color for all objects in this derived classification
       Groups[name]?.forEach(mesh => {
         if (mesh.material) mesh.material.color.set(rgb);
       });
@@ -820,17 +1437,19 @@ function renderLayersTab(list) {
     // Setup other actions
     const eye = actionSpan.querySelector('.toggle-eye');
     eye.addEventListener('click', e => { e.stopPropagation(); toggleLayer(name, eye); });
-    actionSpan.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusGroup(name); });
+    actionSpan.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(filteredIds); });
     hdr.addEventListener('click', () => grp.classList.toggle('open'));
     grp.appendChild(hdr);
     // (Removed duplicate setup, only use actionSpan context)
 
     const body = document.createElement('div');
     body.className = 'layer-items';
-    addMeshRows(body, items, 25);
+    addMeshRows(body, filteredMeshes, 25);
     grp.appendChild(body);
     list.appendChild(grp);
   });
+
+  if (!rendered) list.innerHTML = `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun résultat pour les filtres actifs</div>`;
 }
 
 // ── Onglet Familles ───────────────────────────────────────────────────────────
@@ -842,25 +1461,36 @@ function renderFamiliesTab(list) {
     return;
   }
 
-  // Grouper les familles par calque pour plus de lisibilité
-  const byLayer = {};
+  let rendered = 0;
+
+  // Grouper les familles par type IFC pour rester sur une structure BIM native
+  const byIfcType = {};
   for (const fname of names) {
     const eid = Families[fname][0];
-    const obj = BIMObjects[`ifc_${eid}`];
-    const lname = obj?.type || 'Autres';
-    if (!byLayer[lname]) byLayer[lname] = [];
-    byLayer[lname].push(fname);
+    const obj = BIMStore.byId[eid] || BIMObjects[`ifc_${eid}`];
+    const typeName = obj?.ifcType || 'IFC_UNKNOWN';
+    if (!byIfcType[typeName]) byIfcType[typeName] = [];
+    byIfcType[typeName].push(fname);
   }
 
-  for (const [lname, fnames] of Object.entries(byLayer).sort()) {
-    const def = layerDef(lname);
+  for (const [typeName, fnames] of Object.entries(byIfcType).sort()) {
+    const sampleName = fnames[0];
+    const sampleId = Families[sampleName]?.[0];
+    const sample = BIMStore.byId[sampleId];
+    const def = layerDef(sample?.classification || 'Objets génériques');
     const sec = document.createElement('div');
     sec.style.cssText = 'padding:6px 10px 2px;font-size:9px;font-family:"Space Mono",monospace;color:#4b5563;letter-spacing:1px;text-transform:uppercase;border-top:1px solid #1a1e28;margin-top:4px';
-    sec.textContent = `${def.icon} ${lname}`;
-    list.appendChild(sec);
+    sec.textContent = `${def.icon} ${typeName}`;
+    let sectionHasContent = false;
+    const sectionChildren = [];
 
     fnames.forEach(fname => {
       const ids = Families[fname];
+      const filteredIds = filterExpressIDs(ids);
+      const meshes = meshesFromExpressIDs(filteredIds);
+      if (!meshes.length) return;
+      sectionHasContent = true;
+      rendered++;
       const grp = document.createElement('div');
       grp.className = 'layer-group';
 
@@ -869,23 +1499,29 @@ function renderFamiliesTab(list) {
       hdr.innerHTML = `
         <div class="layer-dot" style="background:#6366f1"></div>
         <span style="font-size:11px" title="${fname}">${fname || '(sans nom)'}</span>
-        <span style="font-size:10px;color:#6b7280;margin-left:4px">${ids.length}</span>
+        <span style="font-size:10px;color:#6b7280;margin-left:4px">${formatFilteredCount(filteredIds.length, ids.length)}</span>
         <button class="focus-btn" style="display:flex;margin-left:auto" title="Centrer sur cette famille">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M3 12h2M19 12h2M12 3v2M12 19v2"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>
+          ${iconSpan('icon-focus', 'icon-focus')}
         </button>
         <span class="layer-arrow">▶</span>`;
-      hdr.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(ids); });
+      hdr.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(filteredIds); });
       hdr.addEventListener('click', () => grp.classList.toggle('open'));
       grp.appendChild(hdr);
 
       const body = document.createElement('div');
       body.className = 'layer-items';
-      const meshes = ids.map(id => BIMObjects[`ifc_${id}`]?.mesh).filter(Boolean);
       addMeshRows(body, meshes, 15);
       grp.appendChild(body);
-      list.appendChild(grp);
+      sectionChildren.push(grp);
     });
+
+    if (sectionHasContent) {
+      list.appendChild(sec);
+      sectionChildren.forEach(child => list.appendChild(child));
+    }
   }
+
+  if (!rendered) list.innerHTML = `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun résultat pour les filtres actifs</div>`;
 }
 
 // ── Onglet Niveaux ────────────────────────────────────────────────────────────
@@ -896,8 +1532,14 @@ function renderStoreysTab(list) {
       Aucun niveau (IfcBuildingStorey) détecté</div>`;
     return;
   }
+
+  let rendered = 0;
   names.forEach(sname => {
     const ids = Storeys[sname].filter(v => typeof v === 'number');
+    const filteredIds = filterExpressIDs(ids);
+    const meshes = meshesFromExpressIDs(filteredIds);
+    if (!meshes.length) return;
+    rendered++;
     const grp = document.createElement('div');
     grp.className = 'layer-group open';
 
@@ -906,22 +1548,23 @@ function renderStoreysTab(list) {
     hdr.innerHTML = `
       <div class="layer-dot" style="background:#00e5c0"></div>
       <span>🏢 ${sname}</span>
-      <span style="font-size:10px;color:#6b7280;margin-left:4px">${ids.length} élém.</span>
+      <span style="font-size:10px;color:#6b7280;margin-left:4px">${formatFilteredCount(filteredIds.length, ids.length, 'élém.')}</span>
       <button class="focus-btn" style="display:flex;margin-left:auto" title="Centrer sur le niveau">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M3 12h2M19 12h2M12 3v2M12 19v2"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>
+        ${iconSpan('icon-focus', 'icon-focus')}
       </button>
       <span class="layer-arrow">▶</span>`;
-    hdr.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(ids); });
+    hdr.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusByExpressIDs(filteredIds); });
     hdr.addEventListener('click', () => grp.classList.toggle('open'));
     grp.appendChild(hdr);
 
     const body = document.createElement('div');
     body.className = 'layer-items';
-    const meshes = ids.map(id => BIMObjects[`ifc_${id}`]?.mesh).filter(Boolean);
     addMeshRows(body, meshes, 20);
     grp.appendChild(body);
     list.appendChild(grp);
   });
+
+  if (!rendered) list.innerHTML = `<div style="padding:20px;color:#4b5563;font-size:11px;text-align:center">Aucun résultat pour les filtres actifs</div>`;
 }
 
 // ── Lignes d'items ────────────────────────────────────────────────────────────
@@ -936,7 +1579,7 @@ function addMeshRows(container, meshes, limit) {
     item.innerHTML = `
       <span class="layer-item-label" title="${obj.name}">${obj.name}</span>
       <button class="focus-btn" title="Centrer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M3 12h2M19 12h2M12 3v2M12 19v2"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>
+        ${iconSpan('icon-focus', 'icon-focus')}
       </button>`;
     item.querySelector('.focus-btn').addEventListener('click', e => { e.stopPropagation(); focusObject(id, item.querySelector('.focus-btn')); });
     item.addEventListener('click', () => selectObject(id, item));
@@ -1202,10 +1845,7 @@ function showPropPanel(obj) {
   const panel = document.getElementById('prop-content');
   if (!obj) {
     panel.innerHTML = `<div class="no-selection">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M3 3l18 18M10.5 10.677a2 2 0 0 0 2.823 2.823"/>
-        <path d="M7.362 7.561C5.68 8.74 4.279 10.42 3 12c1.889 2.991 5.282 6 9 6 1.55 0 3.043-.523 4.395-1.35M12 6c3.784 0 6.979 3.337 9 6a15.3 15.3 0 0 1-1.194 1.532"/>
-      </svg>
+      ${iconSpan('icon-no-selection', 'icon-no-selection')}
       <p>Cliquez un élément<br>pour voir ses propriétés IFC</p>
     </div>`;
     return;
@@ -1214,29 +1854,60 @@ function showPropPanel(obj) {
   const def   = layerDef(obj.type);
   const hex   = def.color.toString(16).padStart(6,'0');
 
-  // Grouper les props par Pset (séparateur "::")
-  const identity = {}, psetGroups = {};
-  for (const [k, v] of Object.entries(obj.props || {})) {
-    const sep = k.indexOf('::');
-    if (sep > -1) {
-      const grp = k.slice(0, sep);
-      if (!psetGroups[grp]) psetGroups[grp] = {};
-      psetGroups[grp][k.slice(sep + 2)] = v;
-    } else {
-      identity[k] = v;
+  const norm = obj.ifcProps || null;
+
+  const fallbackIdentity = {};
+  const fallbackPsetGroups = {};
+  if (!norm) {
+    for (const [k, v] of Object.entries(obj.props || {})) {
+      const sep = k.indexOf('::');
+      if (sep > -1) {
+        const grp = k.slice(0, sep);
+        if (!fallbackPsetGroups[grp]) fallbackPsetGroups[grp] = {};
+        fallbackPsetGroups[grp][k.slice(sep + 2)] = v;
+      } else {
+        fallbackIdentity[k] = v;
+      }
     }
+  }
+
+  function esc(v) {
+    return String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function displayVal(v) {
+    if (v == null || v === '') return '—';
+    if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
+    if (typeof v === 'object' && v.display) {
+      const src = v.sourceUnit && v.targetUnit && v.sourceUnit !== v.targetUnit
+        ? ` <span class="prop-meta">(source ${esc(v.sourceUnit)})</span>`
+        : '';
+      return `${esc(v.display)}${src}`;
+    }
+    const s = String(v);
+    if (s === 'true') return 'Oui';
+    if (s === 'false') return 'Non';
+    return esc(s);
   }
 
   function rows(data) {
     return Object.entries(data)
-      .map(([k, v]) => `<tr><td title="${k}"><span class="prop-cell" title="${k}">${k}</span></td><td title="${v}"><span class="prop-cell" title="${v}">${v}</span></td></tr>`)
+      .map(([k, v]) => {
+        const titleV = esc(String(v?.display || v || '—'));
+        return `<tr><td title="${esc(k)}"><span class="prop-cell" title="${esc(k)}">${esc(k)}</span></td><td title="${titleV}"><span class="prop-cell">${displayVal(v)}</span></td></tr>`;
+      })
       .join('');
   }
 
-  function sectionBlock(title, contentHtml) {
-    return `<div class="prop-section">
+  function sectionBlock(title, contentHtml, kind = '') {
+    return `<div class="prop-section ${kind}">
       <div class="prop-head">
-        <div class="prop-label" title="${title}">${title}</div>
+        <div class="prop-label" title="${esc(title)}">${esc(title)}</div>
         <button class="prop-toggle" type="button" title="Plier / Déplier" aria-label="Plier ou déplier la section" aria-expanded="true">▾</button>
       </div>
       <div class="prop-content-inner">${contentHtml}</div>
@@ -1252,12 +1923,63 @@ function showPropPanel(obj) {
       </div>
     `);
 
-  if (Object.keys(identity).length) {
-    html += sectionBlock('Identité IFC', `<table class="prop-table">${rows(identity)}</table>`);
-  }
-  for (const [grpName, grpData] of Object.entries(psetGroups)) {
-    if (!Object.keys(grpData).length) continue;
-    html += sectionBlock(grpName, `<table class="prop-table">${rows(grpData)}</table>`);
+  if (norm) {
+    if (Object.keys(norm.identity || {}).length) {
+      html += sectionBlock('Identité IFC', `<table class="prop-table">${rows(norm.identity)}</table>`, 'is-identity');
+    }
+    if (Object.keys(norm.baseAttributes || {}).length) {
+      html += sectionBlock('Attributs de base', `<table class="prop-table">${rows(norm.baseAttributes)}</table>`, 'is-base');
+    }
+    if (Object.keys(norm.typeProperties || {}).length) {
+      html += sectionBlock('Propriétés de type', `<table class="prop-table">${rows(norm.typeProperties)}</table>`, 'is-type');
+    }
+
+    const psetEntries = Object.entries(norm.propertySets || {}).sort((a, b) => {
+      const aCommon = /common/i.test(a[0]) ? 0 : 1;
+      const bCommon = /common/i.test(b[0]) ? 0 : 1;
+      if (aCommon !== bCommon) return aCommon - bCommon;
+      return a[0].localeCompare(b[0]);
+    });
+    for (const [grpName, grpData] of psetEntries) {
+      if (!Object.keys(grpData).length) continue;
+      html += sectionBlock(`Pset — ${grpName}`, `<table class="prop-table">${rows(grpData)}</table>`, 'is-pset');
+    }
+
+    const qtoEntries = Object.entries(norm.quantities || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    for (const [grpName, grpData] of qtoEntries) {
+      if (!Object.keys(grpData).length) continue;
+      html += sectionBlock(`Quantités — ${grpName}`, `<table class="prop-table">${rows(grpData)}</table>`, 'is-qto');
+    }
+
+    if ((norm.classifications || []).length) {
+      const classRows = (norm.classifications || []).reduce((acc, c, idx) => {
+        const key = c.source || `Classification ${idx + 1}`;
+        const value = `${c.identifier || '—'}${c.name && c.name !== c.identifier ? ` — ${c.name}` : ''}`;
+        if (!acc[key]) {
+          acc[key] = value;
+        } else {
+          acc[`${key} (${idx + 1})`] = value;
+        }
+        return acc;
+      }, {});
+      html += sectionBlock('Classifications', `<table class="prop-table">${rows(classRows)}</table>`, 'is-classification');
+    }
+
+    if ((norm.materials || []).length) {
+      const matRows = (norm.materials || []).reduce((acc, name, idx) => {
+        acc[`Matériau ${idx + 1}`] = name;
+        return acc;
+      }, {});
+      html += sectionBlock('Matériaux', `<table class="prop-table">${rows(matRows)}</table>`, 'is-material');
+    }
+  } else {
+    if (Object.keys(fallbackIdentity).length) {
+      html += sectionBlock('Identité IFC', `<table class="prop-table">${rows(fallbackIdentity)}</table>`, 'is-identity');
+    }
+    for (const [grpName, grpData] of Object.entries(fallbackPsetGroups)) {
+      if (!Object.keys(grpData).length) continue;
+      html += sectionBlock(grpName, `<table class="prop-table">${rows(grpData)}</table>`, 'is-pset');
+    }
   }
 
   panel.innerHTML = html;
@@ -1359,22 +2081,14 @@ function updateIsolationUI() {
       btn.id = 'isolation-exit-btn';
       btn.className = 'isolation-exit-btn';
       btn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-          <polyline points="16 17 21 12 16 7"/>
-          <line x1="21" y1="12" x2="9" y2="12"/>
-        </svg>
+        ${iconSpan('icon-isolation-exit', 'icon-toolbar')}
         Quitter l'isolation (${isolatedObjects.size} objet${isolatedObjects.size > 1 ? 's' : ''})
       `;
       btn.addEventListener('click', exitIsolation);
       document.querySelector('.canvas-wrap').appendChild(btn);
     } else {
       btn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-          <polyline points="16 17 21 12 16 7"/>
-          <line x1="21" y1="12" x2="9" y2="12"/>
-        </svg>
+        ${iconSpan('icon-isolation-exit', 'icon-toolbar')}
         Quitter l'isolation (${isolatedObjects.size} objet${isolatedObjects.size > 1 ? 's' : ''})
       `;
     }
@@ -1483,14 +2197,10 @@ function updateSearchUI() {
       <span>${currentSearchIndex + 1} / ${searchResults.length}</span>
       <span style="color:#6b7280;font-size:10px;margin-left:8px">${matchInfo}</span>
       <button id="search-prev" title="Résultat précédent" style="margin-left:auto">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
+        ${iconSpan('icon-chevron-left', 'icon-toolbar')}
       </button>
       <button id="search-next" title="Résultat suivant">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
+        ${iconSpan('icon-chevron-right', 'icon-toolbar')}
       </button>
     `;
     
@@ -1721,7 +2431,6 @@ canvas.addEventListener('click', e => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  CONTRÔLES CAMÉRA
 // ═════════════════════════════════════════════════════════════════════════════
-let mode      = 'orbit';
 let isDragging = false;
 let lastMouse  = { x:0, y:0 };
 let sph = { theta: 0.6, phi: 0.85, r: 60 };
@@ -1740,6 +2449,7 @@ function camUpdate() {
 camUpdate();
 
 canvas.addEventListener('mousedown', e => {
+  if (e.button === 1) e.preventDefault(); // Empêche l'autoscroll navigateur sur molette
   isDragging = false;
   lastMouse = { x: e.clientX, y: e.clientY };
   canvas.style.cursor = 'grabbing';
@@ -1751,7 +2461,7 @@ canvas.addEventListener('mousedown', e => {
     if (e.button === 0) {
       sph.theta -= dx * 0.005;
       sph.phi    = Math.max(0.04, Math.min(Math.PI-0.04, sph.phi - dy*0.005));
-    } else if (e.button === 2) {
+    } else if (e.button === 1) {
       const right = new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
       target.addScaledVector(right, -dx * 0.025 * scale);
       target.addScaledVector(camera.up,  dy * 0.025 * scale);
@@ -1762,7 +2472,6 @@ canvas.addEventListener('mousedown', e => {
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
 });
-canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   sph.r = Math.max(0.1, Math.min(5000, sph.r * (1 + e.deltaY * 0.0008)));
@@ -1917,11 +2626,6 @@ function toggleLayer(name, eyeEl) {
   Groups[name]?.forEach(m => m.visible = !wasVis);
   eyeEl.classList.toggle('hidden', wasVis);
 }
-function setMode(m) {
-  mode = m;
-  document.querySelectorAll('.toolbar-btn[id^="btn-"]').forEach(b=>b.classList.remove('active'));
-  document.getElementById('btn-'+m)?.classList.add('active');
-}
 function resetCamera() { sph={theta:0.6,phi:0.85,r:60}; target.set(0,5,0); camUpdate(); }
 function setView(v) {
   if(v==='top')  {sph.phi=0.08; sph.r=Math.max(sph.r,30);}
@@ -1993,13 +2697,17 @@ function showProjectBanner(fname) {
   const nf=Object.keys(Families).length;
   const ns=Object.keys(Storeys).filter(k=>!k.startsWith('_')).length;
   const nl=Object.keys(Groups).length;
+  const nm=Object.keys(BIMStore.byMaterial).length;
+  const ny=Object.keys(BIMStore.bySystem).length;
   b.innerHTML=`
     <span style="color:#3d8eff;font-weight:700">${projectInfo.name||fname}</span>
     ${projectInfo.building&&projectInfo.building!=='—'?`<span>Bâtiment : <b style="color:#e8eaf0">${projectInfo.building}</b></span>`:''}
     ${projectInfo.site&&projectInfo.site!=='—'?`<span>Site : <b style="color:#e8eaf0">${projectInfo.site}</b></span>`:''}
     ${projectInfo.phase&&projectInfo.phase!=='—'?`<span>Phase : <b style="color:#e8eaf0">${projectInfo.phase}</b></span>`:''}
     <span>Niveaux : <b style="color:#00e5c0">${ns}</b></span>
-    <span>Calques : <b style="color:#00e5c0">${nl}</b></span>
+    <span>Classifications : <b style="color:#00e5c0">${nl}</b></span>
+    <span>Matériaux : <b style="color:#00e5c0">${nm}</b></span>
+    <span>Systèmes : <b style="color:#00e5c0">${ny}</b></span>
     <span>Familles : <b style="color:#00e5c0">${nf}</b></span>
     <span>Éléments : <b style="color:#00e5c0">${nb}</b></span>`;
 }
@@ -2063,10 +2771,66 @@ animate();
 // ═════════════════════════════════════════════════════════════════════════════
 //  BOOT
 // ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+//  PANELS REDIMENSIONNABLES
+// ═════════════════════════════════════════════════════════════════════════════
+function initResizeHandles() {
+  const LEFT_MIN = 200, LEFT_MAX = 600;
+  const RIGHT_MIN = 200, RIGHT_MAX = 600;
+
+  const leftPanel   = document.querySelector('.left-panel');
+  const rightPanel  = document.getElementById('right-panel');
+  const handleLeft  = document.getElementById('handle-left');
+  const handleRight = document.getElementById('handle-right');
+
+  // Restore saved widths from previous session
+  const savedLeft  = parseInt(localStorage.getItem('bim-left-width'),  10);
+  const savedRight = parseInt(localStorage.getItem('bim-right-width'), 10);
+  if (savedLeft  >= LEFT_MIN  && savedLeft  <= LEFT_MAX)  leftPanel.style.width  = savedLeft  + 'px';
+  if (savedRight >= RIGHT_MIN && savedRight <= RIGHT_MAX) rightPanel.style.width = savedRight + 'px';
+
+  function makeDraggable(handle, panel, side) {
+    const min = side === 'left' ? LEFT_MIN : RIGHT_MIN;
+    const max = side === 'left' ? LEFT_MAX : RIGHT_MAX;
+    const storageKey = side === 'left' ? 'bim-left-width' : 'bim-right-width';
+
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = panel.getBoundingClientRect().width;
+      // Disable CSS transition during drag to avoid lag
+      const prevTransition = panel.style.transition;
+      panel.style.transition = 'none';
+      handle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      function onMove(ev) {
+        const delta = side === 'left' ? ev.clientX - startX : startX - ev.clientX;
+        const newW = Math.min(Math.max(startW + delta, min), max);
+        panel.style.width = newW + 'px';
+      }
+
+      function onUp() {
+        handle.classList.remove('dragging');
+        panel.style.transition = prevTransition;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem(storageKey, parseInt(panel.style.width, 10));
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup',   onUp);
+      }
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup',   onUp);
+    });
+  }
+
+  makeDraggable(handleLeft,  leftPanel,  'left');
+  makeDraggable(handleRight, rightPanel, 'right');
+}
+
 async function init() {
-  document.getElementById('btn-orbit') ?.addEventListener('click', ()=>setMode('orbit'));
-  document.getElementById('btn-pan')   ?.addEventListener('click', ()=>setMode('pan'));
-  document.getElementById('btn-zoom')  ?.addEventListener('click', ()=>setMode('zoom'));
   document.getElementById('btn-section')?.addEventListener('click', toggleSection);
   document.getElementById('btn-reset') ?.addEventListener('click', resetCamera);
   document.getElementById('btn-wire')  ?.addEventListener('click', toggleWireframe);
@@ -2116,27 +2880,16 @@ async function init() {
     
     menu.innerHTML = `
       <div class="context-menu-item" id="ctx-isolate-object">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-        </svg>
+        ${iconSpan('icon-isolate-object', 'icon-context')}
         Isoler cet objet
       </div>
       ${layer ? `<div class="context-menu-item" id="ctx-isolate-layer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7"/>
-          <rect x="14" y="3" width="7" height="7"/>
-          <rect x="3" y="14" width="7" height="7"/>
-          <rect x="14" y="14" width="7" height="7"/>
-        </svg>
-        Isoler le calque "${layer}"
+        ${iconSpan('icon-isolate-classification', 'icon-context')}
+        Isoler la classification "${layer}"
       </div>` : ''}
       <div class="context-menu-separator"></div>
       <div class="context-menu-item" id="ctx-focus">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/>
-        </svg>
+        ${iconSpan('icon-focus', 'icon-context')}
         Zoomer sur l'objet (F)
       </div>
     `;
@@ -2197,6 +2950,7 @@ async function init() {
   document.getElementById('loading').style.display = 'none';
   // Écran d'accueil
   buildPanel();
+  initResizeHandles();
 }
 
 init().catch(e=>{

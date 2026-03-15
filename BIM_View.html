@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Visualiseur BIM 3D interactif pour fichiers IFC. Analyse, navigation, propriétés, calques, familles et niveaux.">
+  <meta name="description" content="Visualiseur BIM 3D interactif pour fichiers IFC. Analyse, navigation par types IFC, classifications, familles et niveaux.">
   <meta name="author" content="Julie">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230d0f14'/><text x='50' y='60' font-size='50' text-anchor='middle' fill='%233d8eff'>B</text></svg>">
+  <link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg">
   <title>BIM View — IFC 3D</title>
   <link rel="stylesheet" href="BIM_View.css">
 </head>
@@ -17,39 +17,26 @@
     <div class="logo" aria-label="Logo BIM View">BIM<span>·_·</span>VIEW</div>
     <div class="sep" aria-hidden="true"></div>
     <div class="toolbar" role="toolbar" aria-label="Outils de navigation 3D">
-      <button class="toolbar-btn active" id="btn-orbit" title="Orbite" aria-label="Mode orbite">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        Orbite
-      </button>
-      <button class="toolbar-btn" id="btn-pan" title="Panoramique" aria-label="Mode panoramique">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
-        Pan
-      </button>
-      <button class="toolbar-btn" id="btn-zoom" title="Zoom" aria-label="Mode zoom">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-        Zoom
-      </button>
-      <div class="sep" aria-hidden="true"></div>
       <button class="toolbar-btn" id="btn-section" title="Plan de coupe" aria-label="Activer le plan de coupe">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+        <span class="icon icon-toolbar icon-section" aria-hidden="true"></span>
         Coupe
       </button>
       <button class="toolbar-btn" id="btn-reset" title="Recentrer" aria-label="Recentrer la caméra">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"/><polyline points="12 8 12 12 14 14"/></svg>
+        <span class="icon icon-toolbar icon-reset" aria-hidden="true"></span>
         Reset
       </button>
       <div class="sep" aria-hidden="true"></div>
       <button class="toolbar-btn" id="btn-wire" aria-label="Mode filaire">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="12 2 22 20 2 20"/></svg>
+        <span class="icon icon-toolbar icon-wire" aria-hidden="true"></span>
         Filaire
       </button>
       <button class="toolbar-btn" id="btn-xray" aria-label="Mode X-Ray">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+        <span class="icon icon-toolbar icon-xray" aria-hidden="true"></span>
         X-Ray
       </button>
     </div>
     <label class="ifc-upload-btn" for="ifc-file" aria-label="Ouvrir un fichier IFC">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span class="icon icon-upload" aria-hidden="true"></span>
       Ouvrir IFC
     </label>
     <input type="file" id="ifc-file" accept=".ifc,.ifczip" aria-label="Sélectionner un fichier IFC">
@@ -59,7 +46,7 @@
 <!-- WORKSPACE PRINCIPAL -->
 <main class="workspace" id="main-content">
 
-  <!-- PANNEAU GAUCHE — Layers -->
+  <!-- PANNEAU GAUCHE — Navigation BIM -->
   <aside class="left-panel" aria-label="Structure BIM">
     <div class="panel-header">
       Structure BIM
@@ -68,10 +55,7 @@
     
     <!-- Barre de recherche -->
     <div class="search-bar">
-      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/>
-        <path d="m21 21-4.35-4.35"/>
-      </svg>
+      <span class="icon search-icon icon-search" aria-hidden="true"></span>
       <input 
         type="text" 
         id="search-input" 
@@ -83,10 +67,12 @@
     </div>
     
     <nav class="left-tabs" id="left-tabs" aria-label="Onglets panneau gauche"></nav>
-    <div class="layer-list" id="layer-list" tabindex="0" aria-label="Liste des calques, familles ou niveaux">
+    <div id="layer-controls" aria-label="Contrôles de navigation" role="toolbar"></div>
+    <div class="layer-list" id="layer-list" tabindex="0" aria-label="Liste des types IFC, classifications, familles ou niveaux">
       <!-- Populated by JS -->
     </div>
   </aside>
+  <div class="resize-handle" id="handle-left" title="Redimensionner le panneau gauche" aria-hidden="true"></div>
 
   <!-- ZONE 3D CANVAS -->
   <section class="canvas-wrap" id="canvas-wrap" aria-label="Zone de visualisation 3D">
@@ -98,7 +84,7 @@
     </div>
 
     <div class="nav-hint" aria-hidden="true">
-      Clic-gauche <span>Orbite</span> · Scroll <span>Zoom</span> · Clic-droit <span>Pan</span> · Clic objet <span>Sélectionner</span>
+      Clic-gauche <span>Orbite</span> · Scroll <span>Zoom</span> · Molette <span>Pan</span> · Clic-droit <span>Menu</span> · Clic objet <span>Sélectionner</span>
     </div>
 
     <div class="hud-corner" aria-label="Vues rapides">
@@ -129,13 +115,14 @@
 
     <div class="highlight-label" id="highlight-label"></div>
   </section>
+  <div class="resize-handle" id="handle-right" title="Redimensionner le panneau droit" aria-hidden="true"></div>
 
   <!-- PANNEAU DROIT — Propriétés -->
   <aside class="right-panel" id="right-panel" aria-label="Propriétés IFC">
     <div class="panel-header">Propriétés IFC</div>
     <div id="prop-content" style="overflow-y:auto;max-height:calc(100vh - 120px);">
       <div class="no-selection">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3l18 18M10.5 10.677a2 2 0 0 0 2.823 2.823"/><path d="M7.362 7.561C5.68 8.74 4.279 10.42 3 12c1.889 2.991 5.282 6 9 6 1.55 0 3.043-.523 4.395-1.35M12 6c3.784 0 6.979 3.337 9 6a15.3 15.3 0 0 1-1.194 1.532"/></svg>
+        <span class="icon icon-no-selection" aria-hidden="true"></span>
         <p>Cliquez un élément<br>pour voir ses propriétés</p>
       </div>
     </div>
